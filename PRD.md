@@ -18,6 +18,10 @@ To achieve robust asynchronous delegation, the architecture must satisfy the fol
 * **Live Introspection:** Human operators must be able to attach to, monitor, and detach from any running subagent session in real-time via standard terminal emulators without disrupting the agent's execution.
 * **Asynchronous Dispatch:** The parent agent must be able to trigger a sub-task and immediately return to an idle state or pursue parallel tasks.
 * **Standardized IPC:** Inter-process communication between the parent and subagents must rely on standardized, asynchronous file-based handoffs rather than direct stream piping.
+* **Configurable Invocation**: The orchestration agent may choose from a predefined set of invocations with following parameters:
+  * Invocation script (currently /home/r2h2/.local/bin/claude and /home/r2h2/.local/bin/claude-glm) 
+  * Model tier (fable-custom, opus-custom, sonnet-custom, haiku-custom)
+  * Effort
 
 ## 3. Architecture Design
 

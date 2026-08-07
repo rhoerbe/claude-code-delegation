@@ -1,0 +1,41 @@
+# python
+.venv/
+__pycache__/
+*.egg-info/
+
+# node deps — anywhere (root-level tooling + web/ Vite+Svelte client)
+node_modules/
+
+# web/ (Vite + Svelte management UI client)
+web/dist/
+web/coverage/
+web/.vite/
+web/*.tsbuildinfo
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# build artifacts (containerize/)
+*.tar
+*.log
+
+# mineru-api scratch if the server is ever started from the repo root
+# (it writes task outputs to ./output/ relative to its cwd — run it from
+# ~/.cache/lobotomy instead, see USAGE.md)
+output/
+
+# local env / secrets — never commit
+.env
+*.local
+secrets/
+
+# instance-specific deployment mapping (template is committed; this is not)
+INSTANCE_MAPPING.md
+scratch/
+# Claude Code local (agent worktrees, skills)
+.claude/
+logs/
+**/nohup.out
