@@ -40,6 +40,8 @@ tokens** — so routing *worker* traffic to a cheaper backend captures most of t
 * **Configurable invocation.** A Plan selects a Profile and a Tier per phase.
 * **Routing attestation.** The model that actually served a phase must be verified
   against what the Plan asked for.
+* **Quota awareness.** The Runner must know how much allowance remains and when it
+  resets, and act on it *before* a worker blocks — not only after.
 
 ## 3. Architecture
 
@@ -72,6 +74,22 @@ Freigang — see [ADR-0002](docs/adr/0002-no-container-in-the-mvp.md).
 Runner rebuilds state from one `agents --json` call, whereas a missed hook event is gone
 forever. The recoverable channel is always the authoritative one.
 
+### Quota telemetry
+
+The statusline command receives, on stdin, a `rate_limits` object carrying
+`five_hour` and `seven_day`, each with `used_percentage` and a `resets_at` unix epoch.
+A statusline command is just a program handed JSON, so **each Worker Agent runs a
+statusline that does nothing but write `rate_limits` to a file.** The Runner gets live,
+token-free quota telemetry per worker.
+
+This makes the Attendant partly *predictive* rather than purely reactive: don't dispatch
+a large phase at 97% of a window — park, and wake at `resets_at`. It also lets the
+per-Quota-Pool cap be enforced on measured allowance rather than a fixed worker count.
+
+`rate_limits` is absent until a session's first API response, and absent entirely on
+non-subscription Profiles — which is itself the cleanest signal distinguishing a
+subscription pool from a pay-per-token one.
+
 ### The Verdict contract
 
 A Reviewer writes two artifacts: a prose review, and a one-line Verdict —
@@ -82,6 +100,8 @@ never summarises what it cannot judge.
 
 ## 4. Execution flow
 
+0. **Admit** — check the Profile's remaining allowance against the phase's expected size.
+   Too little left: park until `resets_at` rather than dispatch into a wall.
 1. **Dispatch** — one phase, one worktree, one `claude --bg` under the phase's Profile.
    *Dispatch exit 0 does not mean the worker started* (see §7); a liveness check follows.
 2. **Poll** — `agents --json` in the phase's Profile namespace until `idle` or `waiting`.
@@ -151,8 +171,11 @@ Each of these is a bug the Runner would otherwise ship with — all observed in 
 ## 8. Open questions
 
 * **What a usage limit actually emits.** No `usage_limit` value exists among the
-  notification-type identifiers. A tripwire (`~/.claude/limit-probe.log`) captures the
-  next natural limit. **The Attendant cannot be designed until this is answered.**
+  notification-type identifiers. Tripwires capture the next natural limit on both
+  channels: `~/.claude/limit-probe.log` (hooks) and `~/.claude/limit-probe-status.log`
+  (`agents --json` status). **This is now a backstop rather than the linchpin** — with
+  quota telemetry the Runner can park before the wall instead of discovering it by
+  hitting it. It still matters for the case where a limit arrives unforeseen.
 * **Whether workers survive a daemon restart.** Workers outlived their dispatching shell;
   killing the daemon under load was not tested.
 * **Budget guardrail interaction.** If `hosting#88` lands a layer that downgrades or

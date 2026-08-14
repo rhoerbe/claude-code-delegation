@@ -88,7 +88,9 @@ each other; Profiles in different Pools do not.
 
 The Pool — not the worker count — is the unit of concurrency limits, and it is the
 only real axis of parallelism available: two workers on one Pool exhaust it twice as
-fast and then block together, whereas two workers on different Pools are genuinely
+fast and then block together — a Pool's remaining allowance and reset time are
+observable, so exhaustion is a condition to be anticipated rather than merely
+survived — whereas two workers on different Pools are genuinely
 independent.
 
 ## Tier
