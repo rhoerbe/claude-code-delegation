@@ -1,57 +1,165 @@
-# Product Design Record (PDR): Containerized AI Agent Multiplexer
+# Product Design Record: Claude Code Delegation
 
-**Target Environment:** Debian 13 (Trixie), Podman (Rootless), tmux
-**Core Focus:** Asynchronous Agent Delegation, PTY Supervision, State Introspection
+**Target environment:** Debian 13 (Trixie), no container in the MVP
+**Core focus:** durable delegation of long-running agent work, limit survival, cost-aware routing
+**Vocabulary:** see [CONTEXT.md](CONTEXT.md) — terms below are used in their glossary sense
+**Evidence base:** [docs/spike-native-bg.md](docs/spike-native-bg.md) (2026-08-14, binary 2.1.232)
 
-## 1. Context & Executive Summary
+## 1. Problem
 
-Using Claude Code for long-running tasks with subagents suffers from 2 issues that cannot be remedied in the native tool alone.
-- Arriving at a spending limit where the user wants to wait until a new time window opens, gets the agent stuck until manuaal intervention akss to resume.
-- Subagent output is not visible.
+Long-running delegated work fails in two ways that the `/handoff` skill cannot fix from
+inside a session:
 
-## 2. System Requirements
+* **A usage limit stalls the run until a human presses a key.** Hours are lost to an
+  agent sitting at a dialog nobody is watching.
+* **Delegated work is invisible while it runs**, and its result lands in the delegating
+  agent's context whether wanted or not.
 
-To achieve robust asynchronous delegation, the architecture must satisfy the following constraints:
+`/handoff` mitigates the first by *resuming from evidence*: it rescues uncommitted work
+and respawns. It has to, because a Task-tool Subagent does not exist between model
+calls — there is no process to keep alive.
 
-* **Context Isolation:** Subagents must execute in isolated environments. Their thought processes and intermediate outputs must not flood the parent agent's context window.
-* **Rate-Limit Resilience:** The system must autonomously detect and navigate standard interactive API usage-limit prompts (e.g., answering "wait and resume") without human intervention or parent agent polling.
-* **Live Introspection:** Human operators must be able to attach to, monitor, and detach from any running subagent session in real-time via standard terminal emulators without disrupting the agent's execution.
-* **Asynchronous Dispatch:** The parent agent must be able to trigger a sub-task and immediately return to an idle state or pursue parallel tasks.
-* **Standardized IPC:** Inter-process communication between the parent and subagents must rely on standardized, asynchronous file-based handoffs rather than direct stream piping.
-* **Configurable Invocation**: The orchestration agent may choose from a predefined set of invocations with following parameters:
-  * Invocation script (currently /home/r2h2/.local/bin/claude and /home/r2h2/.local/bin/claude-glm) 
-  * Model tier (fable-custom, opus-custom, sonnet-custom, haiku-custom)
-  * Effort
+**A resident session is different: it survives the limit and waits.** The whole point of
+this project is to convert a resume-from-evidence problem into a stay-alive problem.
 
-## 3. Architecture Design
+Cost is the second driver. Measured in `hosting#49`, delegated work is **60–70% of output
+tokens** — so routing *worker* traffic to a cheaper backend captures most of the spend.
 
-The architecture relies on a nested execution model, abstracting the interactive TUI requirements of the agent away from the parent orchestrator.
+## 2. Requirements
 
-* **Container Engine (Podman):** Acts as the primary isolation boundary. A persistent, daemonized container serves as the execution pool for all subagents, standardizing the environment and tooling available to the AI.
-* **Session Broker (tmux):** Runs as the primary entrypoint within the container. It multiplexes the container's environment, allowing multiple subagents to run concurrently in detached sessions.
-* **Supervisor Hook (PTY Wrapper):** Acts as the bridge between the headless tmux session and the interactive agent. It spawns a pseudo-terminal to fool the agent into rendering its TUI, allowing the supervisor to scrape standard output and inject keystrokes programmatically.
-* **Agent Payload:** The target CLI agent (e.g., Claude Code) executing the specialized task.
+* **Context isolation.** A Worker Agent's reasoning and intermediate output must never
+  enter the scheduling party's context. Enforced by *filesystem layout* — the Runner is
+  not given paths it must not read — never by instructing an agent not to look.
+* **Limit resilience.** A Worker Agent blocked awaiting input must be detected and
+  unblocked without a human.
+* **Live introspection.** A human must be able to attach to a running Worker Agent,
+  watch it, intervene, and detach without disrupting it.
+* **Asynchronous dispatch.** Dispatch returns immediately.
+* **Restartability.** The Runner must reconstruct full state after a crash from durable
+  sources alone. No in-memory state is authoritative.
+* **Configurable invocation.** A Plan selects a Profile and a Tier per phase.
+* **Routing attestation.** The model that actually served a phase must be verified
+  against what the Plan asked for.
 
-## 4. Execution and Delegation Flow
+## 3. Architecture
 
-The lifecycle of a delegated task moves through five distinct phases:
+Four parties, one of which deliberately has no model.
 
-1. **Dispatch Phase:** The parent agent formulates a specialized task. It uses host-level command-line tools to instruct the container engine to spawn a new, detached multiplexer session inside the persistent container. The instruction includes a strict definition of the expected output artifact (e.g., a specific text file).
-2. **Initialization Phase:** Inside the container, the multiplexer initializes the session. The supervisor wrapper takes control, establishing the virtual pseudo-terminal and launching the subagent. The parent agent's dispatch command returns a success code immediately, freeing the parent.
-3. **Execution & Supervision Phase:** The subagent works through the prompt within its PTY. If it encounters a rate limit, the supervisor intercepts the dialog rendering in the output stream and automatically injects the required terminal input to pause and resume, keeping the subagent alive.
-4. **Introspection Phase (Optional):** At any point, a human operator can query the container engine for active multiplexer sessions and attach their local terminal to the running subagent. The operator can view the real-time standard output, intervene if necessary, and detach without terminating the process.
-5. **Reintegration Phase:** Upon task completion, the subagent writes a concise summary of its work to a shared volume mount. The parent agent, either through periodic polling or a subsequent prompt, reads this artifact file, absorbs the findings into its context, and triggers the termination of the detached multiplexer session to free resources.
+| Party | Model | Role |
+|---|---|---|
+| **Planner** | capable, interactive | Writes the Plan. Not part of the MVP runtime. |
+| **Runner** | **none** | Executes the Plan: dispatch, poll, branch on Verdict, checkpoint, reap. |
+| **Worker Agent** | per phase | `claude --bg`, one per phase, in its own git worktree. |
+| **Reviewer** | capable | A Worker Agent that judges another's output. |
 
-## 5. Security & Resource Considerations
+The Runner is a program, not an agent — see [ADR-0001](docs/adr/0001-runner-is-a-program-not-an-agent.md).
+It has no context window to exhaust, no usage limit, and no capacity to improvise.
 
-Implementing this architecture requires strict adherence to security boundaries and resource management, particularly given the autonomous execution capabilities of the agents.
+**There is no container, no tmux, and no pseudo-terminal.** The spike established that
+`claude --bg` already provides detached dispatch, `claude agents --json` provides
+TTY-free machine state, `claude attach` provides live introspection, and blocked-detection
+arrives as a *typed* hook event rather than a screen-scrape — see
+[ADR-0003](docs/adr/0003-native-background-sessions.md). Containment is delegated to
+Freigang — see [ADR-0002](docs/adr/0002-no-container-in-the-mvp.md).
 
-* **Rootless Execution Boundaries:** The container engine must operate entirely in rootless mode to prevent potential privilege escalation from an autonomous agent executing arbitrary shell commands. User namespace mapping must strictly align with the unprivileged host user.
-* **Credential Management:** API tokens and OAuth session data must not be baked into the container image. They should be mounted dynamically as read-only volumes from the host environment or passed via securely managed environment variables, ensuring that session revocation on the host immediately propagates to the agents.
-* **Mandatory Access Control (MAC):** Volume mounts bridging the host and the container must utilize proper SELinux context labeling. Inter-process communication (the output artifacts) should be restricted to heavily scoped, designated workspace directories to prevent unauthorized file modifications on the host by subagents.
-* **Resource Exhaustion & Lifecycle Management:** Unchecked subagent spawning can lead to CPU/memory starvation or rapid API quota depletion. The architecture must include a lifecycle management strategy—such as host-level cron jobs or parent-agent cleanup mandates—to detect and aggressively terminate orphaned pseudo-terminals and lingering multiplexer sessions after the output artifacts have been consumed.
-* **Monitoring**: using a plausible naming convention monitoring of the containers explains the context (typically the supervisong agnet's issue), phase and model/effort
+### Worker state
 
-## 6. Deployment
+`claude agents --json` reports `busy` (working), `idle` (finished, session alive),
+`waiting` (**blocked on a prompt**), `null` (settled). `waiting` versus `idle` separates
+*blocked* from *done* without touching a terminal.
 
-* **Host OS:** Debian 13 providing the foundation for rootless containerization.
+**Polling is authoritative; hooks are the fast path and the audit trail.** A crashed
+Runner rebuilds state from one `agents --json` call, whereas a missed hook event is gone
+forever. The recoverable channel is always the authoritative one.
+
+### The Verdict contract
+
+A Reviewer writes two artifacts: a prose review, and a one-line Verdict —
+`PASS` / `FAIL <reason>` / `BLOCKED <reason>`. The Runner matches the Verdict without
+comprehending it. **The prose lives in a file whose path the Runner is never given.**
+On a retry the Runner passes the review's *path* into the retried worker's prompt; it
+never summarises what it cannot judge.
+
+## 4. Execution flow
+
+1. **Dispatch** — one phase, one worktree, one `claude --bg` under the phase's Profile.
+   *Dispatch exit 0 does not mean the worker started* (see §7); a liveness check follows.
+2. **Poll** — `agents --json` in the phase's Profile namespace until `idle` or `waiting`.
+3. **Attest** — assert the transcript's served models match the Plan's Tier. A mismatch
+   is a `BLOCKED` verdict: the work may be fine, but the routing promise broke, and that
+   is a spend decision for a human.
+4. **Review** — for phases marked for it, dispatch a Reviewer and branch on its Verdict.
+5. **Checkpoint** — post the outcome to the GitHub issue.
+6. **On FAIL** — one retry with the review path in the prompt, then stop and wait for a
+   human. A second failure means the task was mis-specified, which the Runner cannot fix.
+
+**State lives in the GitHub issue.** It survives the Runner dying, the host rebooting,
+and the laptop closing. The Plan is a YAML fence inside the plan comment: one artifact,
+two audiences — human-readable in the issue, machine-parseable by the Runner.
+
+## 5. Model routing
+
+Realises the **per-subagent** routing unit of `hosting#88`, whose other units
+(per-session ergonomics, budget guardrails) remain that issue's concern.
+
+* A **Plan names a Tier on a Profile** (`sonnet` on `glm`), never a raw model string.
+  Slots get retuned — `hosting#49` already did it once — and plans naming models rot with
+  them.
+* Tier vocabulary reuses `fable`/`opus`/`sonnet`/`haiku`, because `claude-glm` already
+  exports `ANTHROPIC_DEFAULT_*_MODEL` so those aliases resolve to GLM models. The
+  translation layer exists; a neutral vocabulary would only undo it.
+* **A Profile is a namespace, not a setting.** Session registries are scoped per
+  `CLAUDE_CONFIG_DIR` — verified disjoint, 5 sessions against 2, zero overlap. Every
+  dispatch, poll, stop and attach carries its Profile's environment.
+* The Runner treats a Profile as an **opaque "how to invoke" record**. It never
+  interprets the fields. If `hosting#88` later adopts a routing proxy, `profiles.yaml`
+  is rewritten and nothing else is.
+* **Concurrency caps apply per Quota Pool**, not globally: one worker on the Anthropic
+  subscription pool, N on OpenRouter. Two workers on one pool exhaust it twice as fast
+  and then block together; two workers on different pools are genuinely independent.
+  Quota pools are the only real parallelism available.
+* **No automatic cross-Profile substitution.** A phase may declare that it tolerates it;
+  otherwise the Runner waits. `hosting#69` documents a silent opus-fallback leak — silent
+  cross-provider substitution is a known hazard here, not a hypothetical one.
+
+## 6. Security and resource management
+
+* **Isolation is Freigang's job.** This repo builds no containment. Blast radius in the
+  MVP is controlled by one git worktree per Worker Agent.
+* **Credentials are untouched.** The daemon refreshes auth centrally; three concurrent
+  workers left `.credentials.json` byte-identical.
+* **Reaping.** Sessions persist at `idle` after finishing and must be stopped explicitly
+  once their artifacts are consumed.
+* **Version drift is a live hazard.** The binary moved 2.1.224 → 2.1.232 during the
+  design session. The Runner asserts at startup that `agents --json` still carries the
+  fields it parses, and refuses to start otherwise — a loud refusal at boot instead of a
+  silent misparse at 3am.
+
+## 7. Known traps
+
+Each of these is a bug the Runner would otherwise ship with — all observed in the spike:
+
+1. **Dispatch exit 0 ≠ worker started.** A dispatch printed the full success banner, then
+   `crashed: exit 1 before init — error: unknown option '--session-name'`.
+2. **Two different session ids.** `agents --json` returns a UUID; `stop`/`logs`/`attach`
+   accept only the **8-char prefix**.
+3. **`claude logs` needs a live daemon**, which exits 5s after its last client. Post-mortems
+   read the transcript instead.
+4. **Background sessions appear only under `agents --json --all`.**
+5. **`-n/--name`**, not `--session-name`; otherwise `name` is the entire prompt text.
+
+## 8. Open questions
+
+* **What a usage limit actually emits.** No `usage_limit` value exists among the
+  notification-type identifiers. A tripwire (`~/.claude/limit-probe.log`) captures the
+  next natural limit. **The Attendant cannot be designed until this is answered.**
+* **Whether workers survive a daemon restart.** Workers outlived their dispatching shell;
+  killing the daemon under load was not tested.
+* **Budget guardrail interaction.** If `hosting#88` lands a layer that downgrades or
+  refuses a dispatch, that is a new blocked state.
+
+## 9. MVP acceptance
+
+One real multi-phase issue runs to completion unattended, **across at least one usage-limit
+reset**, with every phase checkpointed to the issue and at least one Reviewer verdict acted
+on. Surviving the limit is the product; a run that never meets one proves nothing.
