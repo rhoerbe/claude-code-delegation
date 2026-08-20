@@ -3,7 +3,8 @@
 **Target environment:** Debian 13 (Trixie), no container in the MVP
 **Core focus:** durable delegation of long-running agent work, limit survival, cost-aware routing
 **Vocabulary:** see [CONTEXT.md](CONTEXT.md) — terms below are used in their glossary sense
-**Evidence base:** [docs/spike-native-bg.md](docs/spike-native-bg.md) (2026-08-14, binary 2.1.232)
+**Evidence base:** [docs/spike-native-bg.md](docs/spike-native-bg.md) (2026-08-14, binary 2.1.232),
+[docs/spike-auto-continue.md](docs/spike-auto-continue.md) (2026-08-20, binary 2.1.237)
 
 ## 1. Problem
 
@@ -73,6 +74,28 @@ Freigang — see [ADR-0002](docs/adr/0002-no-container-in-the-mvp.md).
 **Polling is authoritative; hooks are the fast path and the audit trail.** A crashed
 Runner rebuilds state from one `agents --json` call, whereas a missed hook event is gone
 forever. The recoverable channel is always the authoritative one.
+
+### Limit resilience is the Runner's job, not the harness's
+
+Claude Code 2.1.234 added `autoContinueAtUsageLimit` — on by default — which parks an
+interactive session at a usage limit and resumes it when the limit resets. **It does not
+apply to Worker Agents.** The gate is `isInteractive() && CLAUDE_CODE_SESSION_KIND !== "bg"`,
+and `--bg` sets that variable, so a worker is excluded structurally — regardless of the
+setting, the subscription, or the limit type. Headless `--print` is excluded too.
+Evidence: [docs/spike-auto-continue.md](docs/spike-auto-continue.md).
+
+So the Attendant's scope is **unchanged**: auto-continue rescues only an attended terminal,
+which in this architecture means a Planner or Supervisor session with a human in front of
+it, never a worker.
+
+It has a second limit worth knowing even there: a **24-hour horizon**. A limit resetting
+further out than that is abandoned (`horizon-exceeded`), so weekly limits are only covered
+once they are already within a day of resetting.
+
+**Standing hazard, independent of this project:** any *attended* session on ≥2.1.234 now
+silently parks instead of erroring, and re-arms repeatedly. Anything measuring wall-clock
+across a session — benchmark arms, phase durations in checkpoints — can absorb a
+multi-hour gap without saying so. Sessions are no longer time-contiguous.
 
 ### Quota telemetry
 
@@ -151,9 +174,11 @@ Realises the **per-subagent** routing unit of `hosting#88`, whose other units
 * **Reaping.** Sessions persist at `idle` after finishing and must be stopped explicitly
   once their artifacts are consumed.
 * **Version drift is a live hazard.** The binary moved 2.1.224 → 2.1.232 during the
-  design session. The Runner asserts at startup that `agents --json` still carries the
-  fields it parses, and refuses to start otherwise — a loud refusal at boot instead of a
-  silent misparse at 3am.
+  design session, and 2.1.234 changed limit behaviour outright. The Runner asserts at
+  startup that `agents --json` still carries the fields it parses, and refuses to start
+  otherwise — a loud refusal at boot instead of a silent misparse at 3am. It also
+  **records the binary version in each checkpoint**, so a completed run stays
+  interpretable after the harness has moved on.
 
 ## 7. Known traps
 
@@ -170,12 +195,15 @@ Each of these is a bug the Runner would otherwise ship with — all observed in 
 
 ## 8. Open questions
 
-* **What a usage limit actually emits.** No `usage_limit` value exists among the
-  notification-type identifiers. Tripwires capture the next natural limit on both
-  channels: `~/.claude/limit-probe.log` (hooks) and `~/.claude/limit-probe-status.log`
-  (`agents --json` status). **This is now a backstop rather than the linchpin** — with
-  quota telemetry the Runner can park before the wall instead of discovering it by
-  hitting it. It still matters for the case where a limit arrives unforeseen.
+* **What a usage limit actually emits *to a Worker Agent*.** 2.1.234 added
+  `quota_auto_resume_{fired,stale,disabled}` to the notification enum, but those belong to
+  the native auto-continue path, which **workers never enter** (see §3, *Limit
+  resilience*). What a `--bg` worker emits at a real limit is still unobserved: the mock
+  in `docs/spike-auto-continue.md` produced only `idle_prompt` and `status: idle`, which
+  may be an artefact of token auth. Tripwires remain armed on both channels
+  (`~/.claude/limit-probe.log`, `~/.claude/limit-probe-status.log`).
+  **This is a backstop rather than the linchpin** — with quota telemetry the Runner parks
+  before the wall instead of discovering it by hitting it.
 * **Whether workers survive a daemon restart.** Workers outlived their dispatching shell;
   killing the daemon under load was not tested.
 * **Budget guardrail interaction.** If `hosting#88` lands a layer that downgrades or
@@ -186,3 +214,8 @@ Each of these is a bug the Runner would otherwise ship with — all observed in 
 One real multi-phase issue runs to completion unattended, **across at least one usage-limit
 reset**, with every phase checkpointed to the issue and at least one Reviewer verdict acted
 on. Surviving the limit is the product; a run that never meets one proves nothing.
+
+The checkpoint trail must record **which mechanism carried the run across the reset**, and
+the binary version it ran under. Workers cannot auto-continue (§3), so a crossing is the
+Attendant's doing — but the Runner may itself be attended during development, and a pass
+that silently rode native auto-continue would prove nothing about the Attendant.
