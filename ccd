@@ -6,14 +6,20 @@
 # the broker (the socket read here just waits — that is the zero-token park;
 # there is no polling loop anywhere in this file).
 #
-# Subcommands (this stage): send, recv, announce, ret, ls, ping.
+# Subcommands: send, recv, announce, ret, ls, ping, broker start|stop|status.
 set -u
 
 CCD_SOCKET="${CCD_SOCKET:-${XDG_RUNTIME_DIR:-/tmp}/ccd-${USER:-$(id -un)}.sock}"
+CCD_PIDFILE="${CCD_PIDFILE:-${XDG_RUNTIME_DIR:-/tmp}/ccd-${USER:-$(id -un)}.pid}"
+CCD_BROKER_LOG="${CCD_PIDFILE%.pid}.log"
 
 # ---------------------------------------------------------------------------
 # transport: one line-JSON request/response over $CCD_SOCKET
 # ---------------------------------------------------------------------------
+
+_ccd_repo_root() {
+  cd "$(dirname "${BASH_SOURCE[0]}")" && pwd
+}
 
 # _ccd_rpc <method> [key=value ...]
 # Prints the raw JSON reply line to stdout. Exit 0 once a reply line was
@@ -231,6 +237,93 @@ else:
 }
 
 # ---------------------------------------------------------------------------
+# broker process management
+# ---------------------------------------------------------------------------
+
+cmd_broker() {
+  local sub="${1:-}"
+  case "$sub" in
+    start) _broker_start ;;
+    stop) _broker_stop ;;
+    status) _broker_status ;;
+    *) echo "usage: ccd broker start|stop|status" >&2; return 2 ;;
+  esac
+}
+
+_broker_start() {
+  if cmd_ping >/dev/null 2>&1; then
+    echo "ccd broker: already running (socket $CCD_SOCKET)"
+    return 0
+  fi
+  local root
+  root="$(_ccd_repo_root)"
+  mkdir -p "$(dirname "$CCD_PIDFILE")"
+  PYTHONPATH="$root${PYTHONPATH:+:$PYTHONPATH}" \
+    nohup python3 -m ccd_broker >"$CCD_BROKER_LOG" 2>&1 &
+  local pid=$!
+  disown "$pid" 2>/dev/null || true
+  echo "$pid" > "$CCD_PIDFILE"
+
+  # Poll-wait for it to come up, not a fixed sleep (avoids racing slow starts
+  # and avoids wasting time on fast ones).
+  local waited=0
+  while [ "$waited" -lt 50 ]; do  # up to ~5s
+    if cmd_ping >/dev/null 2>&1; then
+      echo "ccd broker: started (pid $pid, socket $CCD_SOCKET)"
+      return 0
+    fi
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  echo "ccd broker: launched pid $pid but it did not answer ping within 5s (see $CCD_BROKER_LOG)" >&2
+  return 1
+}
+
+_broker_stop() {
+  if [ ! -f "$CCD_PIDFILE" ]; then
+    if cmd_ping >/dev/null 2>&1; then
+      echo "ccd broker: running but no pidfile at $CCD_PIDFILE — cannot stop automatically" >&2
+      return 1
+    fi
+    echo "ccd broker: not running"
+    return 0
+  fi
+
+  local pid
+  pid="$(cat "$CCD_PIDFILE" 2>/dev/null || true)"
+  if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+    rm -f "$CCD_PIDFILE"
+    echo "ccd broker: not running (stale pidfile removed)"
+    return 0
+  fi
+
+  kill -TERM "$pid" 2>/dev/null
+
+  local waited=0
+  while [ "$waited" -lt 50 ]; do  # up to ~5s
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+
+  if kill -0 "$pid" 2>/dev/null; then
+    echo "ccd broker: pid $pid did not exit within 5s after SIGTERM" >&2
+    return 1
+  fi
+  rm -f "$CCD_PIDFILE"
+  echo "ccd broker: stopped (pid $pid)"
+}
+
+_broker_status() {
+  if cmd_ping >/dev/null 2>&1; then
+    echo "up"
+    return 0
+  fi
+  echo "down"
+  return 1
+}
+
+# ---------------------------------------------------------------------------
 # dispatch
 # ---------------------------------------------------------------------------
 
@@ -244,8 +337,9 @@ usage: ccd <subcommand> [args]
   ccd ret [<handle>]
   ccd ls
   ccd ping
+  ccd broker start|stop|status
 
-env: CCD_SOCKET, CCD_HANDLE
+env: CCD_SOCKET, CCD_HANDLE, CCD_PIDFILE
 EOF
 }
 
@@ -264,6 +358,7 @@ main() {
     ret) cmd_ret "$@" ;;
     ls) cmd_ls "$@" ;;
     ping) cmd_ping "$@" ;;
+    broker) cmd_broker "$@" ;;
     -h|--help|help) _usage ;;
     *)
       echo "ccd: unknown subcommand: $cmd" >&2
