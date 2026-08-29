@@ -6,7 +6,7 @@
 # the broker (the socket read here just waits — that is the zero-token park;
 # there is no polling loop anywhere in this file).
 #
-# Subcommands (this stage): send, recv, ping.
+# Subcommands (this stage): send, recv, announce, ret, ls, ping.
 set -u
 
 CCD_SOCKET="${CCD_SOCKET:-${XDG_RUNTIME_DIR:-/tmp}/ccd-${USER:-$(id -un)}.sock}"
@@ -73,6 +73,17 @@ import json, sys
 d = json.loads(sys.argv[1])
 $body
 " "$reply"
+}
+
+_ccd_ok_or_err() {
+  local reply="$1" okmsg="$2"
+  _ccd_fmt "$reply" "
+if d.get('ok'):
+    print('$okmsg')
+else:
+    print('error: ' + str(d.get('reason', 'unknown error')), file=sys.stderr)
+    sys.exit(1)
+"
 }
 
 # ---------------------------------------------------------------------------
@@ -145,6 +156,65 @@ else:
 "
 }
 
+cmd_announce() {
+  local handle="" model="" effort=""
+  case $# in
+    3) handle="$1"; model="$2"; effort="$3" ;;
+    2) handle="${CCD_HANDLE:-}"; model="$1"; effort="$2" ;;
+    *)
+      echo "usage: ccd announce [<handle>] <model> <effort>  (\$CCD_HANDLE is the default handle)" >&2
+      return 2
+      ;;
+  esac
+  if [ -z "$handle" ]; then
+    echo "ccd announce: no handle given and \$CCD_HANDLE not set" >&2
+    return 2
+  fi
+  local reply
+  reply="$(_ccd_rpc announce "handle=$handle" "model=$model" "effort=$effort")" || {
+    echo "ccd announce: broker unreachable at $CCD_SOCKET" >&2
+    return 1
+  }
+  _ccd_ok_or_err "$reply" "announced $handle ($model/$effort)"
+}
+
+cmd_ret() {
+  if [ $# -gt 1 ]; then
+    echo "usage: ccd ret [<handle>]  (\$CCD_HANDLE is the default handle)" >&2
+    return 2
+  fi
+  local handle="${1:-${CCD_HANDLE:-}}"
+  if [ -z "$handle" ]; then
+    echo "ccd ret: no handle given and \$CCD_HANDLE not set" >&2
+    return 2
+  fi
+  local reply
+  reply="$(_ccd_rpc retire "handle=$handle")" || {
+    echo "ccd ret: broker unreachable at $CCD_SOCKET" >&2
+    return 1
+  }
+  _ccd_ok_or_err "$reply" "retired $handle"
+}
+
+cmd_ls() {
+  local reply
+  reply="$(_ccd_rpc roster)" || {
+    echo "ccd ls: broker unreachable at $CCD_SOCKET" >&2
+    return 1
+  }
+  _ccd_fmt "$reply" "
+if not d.get('ok'):
+    print('ccd ls: ' + str(d.get('reason', 'error')), file=sys.stderr)
+    sys.exit(1)
+workers = d.get('workers') or []
+if not workers:
+    print('(no workers announced)')
+else:
+    for w in workers:
+        print(str(w.get('handle')) + '\t' + str(w.get('model')) + '\t' + str(w.get('effort')))
+"
+}
+
 cmd_ping() {
   local reply
   reply="$(_ccd_rpc ping)" || {
@@ -170,6 +240,9 @@ usage: ccd <subcommand> [args]
 
   ccd send <to> <msg> [-f from]
   ccd recv [<handle>] [-t timeout]      ($CCD_HANDLE is the default handle)
+  ccd announce [<handle>] <model> <effort>
+  ccd ret [<handle>]
+  ccd ls
   ccd ping
 
 env: CCD_SOCKET, CCD_HANDLE
@@ -187,6 +260,9 @@ main() {
   case "$cmd" in
     send) cmd_send "$@" ;;
     recv) cmd_recv "$@" ;;
+    announce) cmd_announce "$@" ;;
+    ret) cmd_ret "$@" ;;
+    ls) cmd_ls "$@" ;;
     ping) cmd_ping "$@" ;;
     -h|--help|help) _usage ;;
     *)
