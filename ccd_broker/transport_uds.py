@@ -10,43 +10,54 @@ Client contract (matters for the `ccd` CLI):
 
   1. connect, write one JSON object followed by "\\n";
   2. keep the connection open and read the reply line;
-  3. close.
+  3. close (or just exit).
 
-Step 3 is the acknowledgement. Do **not** `shutdown(SHUT_WR)` before reading —
-a half-close is tolerated (it is distinguishable from a real close, see
-`_ClientContext`), but a full close before the reply is read is read as "the
-client died", which re-queues a reserved message.
+A client that stays alive without reading its reply is the only thing that
+looks like a dead client, and only for `ACK_TIMEOUT`. `shutdown(SHUT_WR)`
+after the request is tolerated — a half-close is distinguishable from a real
+close (see below) — but a client that *exits* on stdin EOF is not: `socat`
+needs `-t <big>` or it tears the connection down 0.5s into a parked `recv`.
 
-How disconnects are detected (Linux AF_UNIX semantics, and why this is exact):
+How the broker tells "the client took the reply" from "the client died"
+(Linux AF_UNIX semantics, and why this is exact):
 
-  * peer fully closed  -> our end gets `sk_shutdown == SHUTDOWN_MASK` -> POLLHUP
+  * `SIOCOUTQ` on our end reports the bytes we sent that the peer has not yet
+    consumed; it drops to 0 the moment the peer reads them. That is a genuine
+    read-receipt, and it does not require the client to close first.
+  * peer fully closed -> `sk_shutdown == SHUTDOWN_MASK` -> POLLHUP
   * peer closed while our reply was still unread in its receive queue
-                       -> our end additionally gets `sk_err = ECONNRESET` -> POLLERR
+    -> `sk_err = ECONNRESET` -> POLLERR. The kernel sets `sk_err` *before* it
+    purges that unread queue, so a POLLERR re-check after seeing an empty
+    SIOCOUTQ cannot be fooled by a close that discarded the reply.
   * peer only did `shutdown(SHUT_WR)` -> POLLIN/POLLRDHUP but *no* POLLHUP
 
-So POLLERR after a write means "the client died without taking the reply"
-(re-queue), POLLHUP without POLLERR means "the client read it and exited"
-(commit), and POLLRDHUP alone means the client is still there reading.
+So: SIOCOUTQ 0 (and no POLLERR) means "read it" -> consume; POLLERR means
+"died with it unread" -> re-queue; POLLHUP without POLLERR means "read it and
+exited" -> consume; POLLRDHUP alone means the client is still there reading.
 """
 
 from __future__ import annotations
 
+import array
 import errno
+import fcntl
 import json
 import os
 import pwd
 import select
 import socket
 import struct
+import termios
 import threading
 import time
 from typing import Optional
 
 from .broker import Broker
 
-#: Longest we wait for a client to read a `recv` reply and close. A well-behaved
-#: client closes within microseconds; if one lingers past this we assume the
-#: reply landed and consume the message.
+#: Longest we wait for a client to take its `recv` reply. A client that is
+#: reading acknowledges in microseconds; one that lingers past this without
+#: reading gets the message counted as delivered anyway (better than handing
+#: the same task to a second worker).
 ACK_TIMEOUT = 5.0
 
 #: How long a connection may take to send its request line before we hang up.
@@ -58,6 +69,7 @@ MAX_REQUEST_BYTES = 4 * 1024 * 1024
 _POLLRDHUP = getattr(select, "POLLRDHUP", 0)
 _DEAD = select.POLLERR | select.POLLNVAL
 _READABLE = select.POLLIN | _POLLRDHUP
+_SIOCOUTQ = getattr(termios, "TIOCOUTQ", 0x5411)
 
 
 def default_socket_path() -> str:
@@ -84,16 +96,24 @@ class _ClientContext:
         self._events &= ~_READABLE
         self._poll.register(self._conn.fileno(), self._events)
 
+    def _flags(self, timeout_ms: float) -> int:
+        events = self._poll.poll(timeout_ms)
+        return events[0][1] if events else 0
+
+    def _unread_bytes(self) -> Optional[int]:
+        """Bytes we sent that the peer has not consumed, or None if unavailable."""
+        try:
+            buf = array.array("i", [0])
+            fcntl.ioctl(self._conn.fileno(), _SIOCOUTQ, buf, True)
+            return buf[0]
+        except OSError:
+            return None
+
     def alive(self) -> bool:
         """False once the peer is gone. Never blocks."""
         while True:
-            events = self._poll.poll(0)
-            if not events:
-                return True
-            flags = events[0][1]
-            if flags & _DEAD:
-                return False
-            if flags & select.POLLHUP:
+            flags = self._flags(0)
+            if flags & (_DEAD | select.POLLHUP):
                 return False
             if flags & select.POLLIN:
                 try:
@@ -103,16 +123,15 @@ class _ClientContext:
                 if data == b"":
                     self._drop_readable()  # half-close only; peer still reads
                     return True
-                continue  # unexpected trailing bytes: ignore, re-poll
+                continue  # unexpected trailing bytes: ignore and re-poll
             if flags & _POLLRDHUP:
                 self._drop_readable()
-                return True
             return True
 
     def deliver(self, resp: dict) -> bool:
-        """Write the reply, then wait for the client to acknowledge by closing.
+        """Write the reply and wait for the client to actually take it.
 
-        True  -> the client took it (consume the message).
+        True  -> the client read it (consume the message).
         False -> the client died with the reply unread (re-queue it).
         """
         try:
@@ -121,16 +140,16 @@ class _ClientContext:
             return False  # peer was already gone
 
         deadline = time.monotonic() + ACK_TIMEOUT
+        wait_ms = 2.0
         while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return True  # client is lingering; treat the write as good
-            events = self._poll.poll(remaining * 1000.0)
-            if not events:
-                return True
-            flags = events[0][1]
+            flags = self._flags(0)
             if flags & _DEAD:
-                return False  # ECONNRESET: closed with our reply unread
+                return False  # ECONNRESET: died with the reply unread
+            unread = self._unread_bytes()
+            if unread == 0:
+                # Re-check: a close that *discarded* the reply also empties the
+                # queue, but sets sk_err first, so a POLLERR here disambiguates.
+                return not (self._flags(0) & _DEAD)
             if flags & select.POLLIN:
                 try:
                     data = self._conn.recv(4096)
@@ -138,16 +157,22 @@ class _ClientContext:
                     return False
                 if data == b"":
                     self._drop_readable()
-                    if flags & select.POLLHUP:
-                        return True
-                    continue
                 continue
-            if flags & select.POLLHUP:
-                return True  # clean close after reading the reply
             if flags & _POLLRDHUP:
                 self._drop_readable()
                 continue
-            return True
+            if flags & select.POLLHUP:
+                return True  # closed cleanly, reply consumed
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return True  # lingering without reading; count it as delivered
+            if unread is None:
+                # No SIOCOUTQ (non-Linux): fall back to close-as-acknowledgement
+                # and just wait for the peer to hang up.
+                self._poll.poll(remaining * 1000.0)
+                continue
+            self._poll.poll(min(wait_ms, remaining * 1000.0))
+            wait_ms = min(wait_ms * 2, 50.0)
 
 
 class UnixSocketTransport:
