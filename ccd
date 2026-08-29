@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+# ccd - thin bash CLI for ccd-broker (see PLAN-ccd-v2.md §5.2).
+#
+# Each subcommand opens a short-lived connection to $CCD_SOCKET, sends one
+# line-JSON request, and prints the reply human-readably. `ccd recv` blocks in
+# the broker (the socket read here just waits — that is the zero-token park;
+# there is no polling loop anywhere in this file).
+#
+# Subcommands (this stage): send, recv, ping.
+set -u
+
+CCD_SOCKET="${CCD_SOCKET:-${XDG_RUNTIME_DIR:-/tmp}/ccd-${USER:-$(id -un)}.sock}"
+
+# ---------------------------------------------------------------------------
+# transport: one line-JSON request/response over $CCD_SOCKET
+# ---------------------------------------------------------------------------
+
+# _ccd_rpc <method> [key=value ...]
+# Prints the raw JSON reply line to stdout. Exit 0 once a reply line was
+# received from the broker (including a broker-side {"ok":false,...}); exit 1
+# if the connection itself could not be made or produced no reply.
+_ccd_rpc() {
+  local method="$1"; shift
+  python3 - "$CCD_SOCKET" "$method" "$@" <<'PYEOF'
+import json
+import socket
+import sys
+
+sock_path, method = sys.argv[1], sys.argv[2]
+args = {}
+for item in sys.argv[3:]:
+    k, _, v = item.partition("=")
+    args[k] = v
+
+req = json.dumps({"method": method, "args": args}) + "\n"
+
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+try:
+    s.connect(sock_path)
+except OSError as e:
+    sys.stdout.write(json.dumps({"ok": False, "reason": f"connect failed: {e}"}) + "\n")
+    sys.exit(1)
+
+try:
+    s.sendall(req.encode("utf-8"))
+    buf = b""
+    # Blocking read: for `recv` this is the zero-token park. No polling here —
+    # the process is simply asleep in the read() syscall until the broker
+    # writes a reply (message arrival or its own timeout).
+    while b"\n" not in buf:
+        chunk = s.recv(65536)
+        if not chunk:
+            break
+        buf += chunk
+finally:
+    s.close()
+
+line = buf.split(b"\n", 1)[0]
+if not line:
+    sys.stdout.write(json.dumps({"ok": False, "reason": "broker closed connection without a reply"}) + "\n")
+    sys.exit(1)
+sys.stdout.buffer.write(line + b"\n")
+PYEOF
+}
+
+# _ccd_fmt <reply-json> <python-body>
+# Runs <python-body> with `d` bound to the parsed reply dict. The body decides
+# stdout/stderr/exit code (ok:false -> non-zero exit is the convention).
+_ccd_fmt() {
+  local reply="$1" body="$2"
+  python3 -c "
+import json, sys
+d = json.loads(sys.argv[1])
+$body
+" "$reply"
+}
+
+# ---------------------------------------------------------------------------
+# subcommands
+# ---------------------------------------------------------------------------
+
+cmd_send() {
+  if [ $# -lt 2 ]; then
+    echo "usage: ccd send <to> <msg> [-f from]" >&2
+    return 2
+  fi
+  local to="$1" msg="$2" from=""
+  shift 2
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -f) from="${2:-}"; shift 2 ;;
+      *) echo "ccd send: unknown argument: $1" >&2; return 2 ;;
+    esac
+  done
+  local reply
+  reply="$(_ccd_rpc send "to=$to" "msg=$msg" "from=$from")" || {
+    echo "ccd send: broker unreachable at $CCD_SOCKET" >&2
+    return 1
+  }
+  _ccd_fmt "$reply" "
+if d.get('ok'):
+    print('sent (id=' + str(d.get('id')) + ')')
+else:
+    print('ccd send: ' + str(d.get('reason', 'error')), file=sys.stderr)
+    sys.exit(1)
+"
+}
+
+cmd_recv() {
+  local handle="" timeout=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -t) timeout="${2:-}"; shift 2 ;;
+      -*) echo "ccd recv: unknown argument: $1" >&2; return 2 ;;
+      *)
+        if [ -z "$handle" ]; then handle="$1"; shift
+        else echo "ccd recv: unexpected argument: $1" >&2; return 2
+        fi
+        ;;
+    esac
+  done
+  handle="${handle:-${CCD_HANDLE:-}}"
+  if [ -z "$handle" ]; then
+    echo "ccd recv: no handle given and \$CCD_HANDLE not set" >&2
+    return 2
+  fi
+
+  local args=(recv "handle=$handle")
+  [ -n "$timeout" ] && args+=("timeout=$timeout")
+
+  local reply
+  reply="$(_ccd_rpc "${args[@]}")" || {
+    echo "ccd recv: broker unreachable at $CCD_SOCKET" >&2
+    return 1
+  }
+  _ccd_fmt "$reply" "
+if d.get('ok'):
+    print(str(d.get('from')) + ': ' + str(d.get('msg')))
+elif d.get('reason') == 'timeout':
+    print('ccd recv: timeout', file=sys.stderr)
+    sys.exit(1)
+else:
+    print('ccd recv: ' + str(d.get('reason', 'error')), file=sys.stderr)
+    sys.exit(1)
+"
+}
+
+cmd_ping() {
+  local reply
+  reply="$(_ccd_rpc ping)" || {
+    echo "down (broker unreachable at $CCD_SOCKET)" >&2
+    return 1
+  }
+  _ccd_fmt "$reply" "
+if d.get('ok'):
+    print('ok (ccd-broker ' + str(d.get('version', '?')) + ')')
+else:
+    print('ccd ping: ' + str(d.get('reason', 'error')), file=sys.stderr)
+    sys.exit(1)
+"
+}
+
+# ---------------------------------------------------------------------------
+# dispatch
+# ---------------------------------------------------------------------------
+
+_usage() {
+  cat <<'EOF'
+usage: ccd <subcommand> [args]
+
+  ccd send <to> <msg> [-f from]
+  ccd recv [<handle>] [-t timeout]      ($CCD_HANDLE is the default handle)
+  ccd ping
+
+env: CCD_SOCKET, CCD_HANDLE
+EOF
+}
+
+main() {
+  local cmd="${1:-}"
+  if [ -z "$cmd" ]; then
+    _usage >&2
+    return 2
+  fi
+  shift
+
+  case "$cmd" in
+    send) cmd_send "$@" ;;
+    recv) cmd_recv "$@" ;;
+    ping) cmd_ping "$@" ;;
+    -h|--help|help) _usage ;;
+    *)
+      echo "ccd: unknown subcommand: $cmd" >&2
+      _usage >&2
+      return 2
+      ;;
+  esac
+}
+
+main "$@"
