@@ -25,6 +25,29 @@ particular machine (which launcher starts a worker, which model/effort tier
 it gets, systemd units, ansible roles, personal handles) is a deployment
 concern that belongs outside this repo.
 
+The author's own deployment lives in a separate private, ansible-based
+layer, and this is roughly the shape a comparable one takes — useful as a
+sketch if you are building your own, since nothing here depends on it:
+
+- a role that vendors `ccd_broker/` + the `ccd` CLI onto a host and runs the
+  broker as a systemd `--user` unit, with `CCD_SOCKET` pinned to an explicit
+  path rather than left to `${XDG_RUNTIME_DIR:-/tmp}` (a Claude Code Bash-tool
+  subshell does not reliably inherit `XDG_RUNTIME_DIR`, and the fallback
+  quietly starts a *second* broker that neither side reports as an error);
+- a role that installs `skills/ccd-worker.md` as
+  `~/.claude/skills/ccd-worker/SKILL.md` — the loader scans for a directory
+  containing `SKILL.md`, and silently ignores a flat `.md` file;
+- a thin launch wrapper that exports `CCD_HANDLE`/`CCD_MODEL`/`CCD_EFFORT`
+  and then execs whichever backend launcher was named, so backends stay
+  orthogonal to ccd, plus a local naming convention for handles.
+
+Two deployment findings worth carrying over wherever you wire this up: a
+handle must be unique among *live* sessions, since two sessions sharing one
+would silently race for the same queue; and start ccd participants as
+ordinary interactive (or tmux) sessions — `claude --bg` does not propagate
+`CCD_HANDLE`/`CCD_MODEL`/`CCD_EFFORT` into the backgrounded session, so it
+never announces onto the roster (issue #4).
+
 It also does not ship: broker persistence (queues and the roster are
 in-memory only — a broker restart empties both), multi-user auth, or any
 transport other than a single Unix domain socket. See PLAN-ccd-v2.md §10 for
