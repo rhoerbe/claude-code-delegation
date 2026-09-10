@@ -23,7 +23,8 @@ Wire model — one logical request per connection, line-delimited JSON:
 | recv     | {handle, timeout?}      | {ok:true, from, msg} / {ok:false,         |
 |          |                         |  reason:"timeout"}          *blocking*    |
 | announce | {handle, model, effort, | {ok:true} / {ok:false} if the handle is   |
-|          |  force?}                |  live with a different model/effort       |
+|          |  exclusive?, force?}    |  live with a different model/effort, or   |
+|          |                         |  live at all when exclusive               |
 | retire   | {handle}                | {ok:true}  (releases anything it claimed) |
 | claim    | {handle, owner, force?} | {ok:true} / {ok:false} if already claimed |
 | release  | {handle, owner?}        | {ok:true}                                 |
@@ -203,8 +204,22 @@ class Broker:
         model = _as_text(args.get("model"))
         effort = _as_text(args.get("effort"))
         force = bool(args.get("force"))
+        # `exclusive` is for a caller that KNOWS it is starting a new session
+        # — a launcher reserving a name before exec. For it, an identical
+        # model/effort is not the idempotent re-announce below but a genuine
+        # collision: two workers of the same tier on the same issue and phase
+        # is precisely the case the launcher's ordinal suffix exists for, and
+        # the broker cannot tell the two apart on its own (there is no session
+        # identity). Announcing without it stays idempotent, so an
+        # Esc-interrupted worker still reclaims its own handle.
+        exclusive = bool(args.get("exclusive"))
         with self._cond:
             live = self._roster.get(handle)
+            if live is not None and exclusive and not force:
+                return _err(
+                    f"handle '{handle}' is already announced "
+                    f"({live['model']}/{live['effort']})"
+                )
             if live is not None and not force:
                 # Idempotent re-announce is the common case and must keep
                 # working: a session Esc-interrupted mid-park re-announces the

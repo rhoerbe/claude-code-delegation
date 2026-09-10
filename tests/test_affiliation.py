@@ -132,6 +132,19 @@ def main() -> int:
     check("and preserves the claim", owner_of(b, "w1") == "dispA")
     r = call(b, "announce", handle="w1", model="opus", effort="high")
     check("different tier is refused", not r.get("ok"), repr(r))
+    # A launcher reserving a name for a NEW session must be told no even when
+    # the tier matches: two same-tier workers on one issue/phase is exactly
+    # what the ordinal suffix exists for, and the broker cannot tell that from
+    # an Esc-interrupted worker reclaiming its own handle.
+    r = call(b, "announce", handle="w1", model="sonnet", effort="medium",
+             exclusive=True)
+    check("exclusive reservation refuses an identical tier", not r.get("ok"), repr(r))
+    check("exclusive on a free handle succeeds",
+          call(b, "announce", handle="fresh", model="sonnet", effort="medium",
+               exclusive=True).get("ok"))
+    check("plain re-announce is still idempotent after that",
+          call(b, "announce", handle="fresh", model="sonnet",
+               effort="medium").get("ok"))
     check("force overrides",
           call(b, "announce", handle="w1", model="opus", effort="high",
                force=True).get("ok"))

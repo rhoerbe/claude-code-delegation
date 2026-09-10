@@ -163,7 +163,15 @@ else:
 }
 
 cmd_announce() {
-  local handle="" model="" effort=""
+  local handle="" model="" effort="" exclusive=""
+  local args=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --exclusive) exclusive="1"; shift ;;
+      *) args+=("$1"); shift ;;
+    esac
+  done
+  set -- "${args[@]}"
   case $# in
     3) handle="$1"; model="$2"; effort="$3" ;;
     2) handle="${CCD_HANDLE:-}"; model="$1"; effort="$2" ;;
@@ -177,7 +185,12 @@ cmd_announce() {
     return 2
   fi
   local reply
-  reply="$(_ccd_rpc announce "handle=$handle" "model=$model" "effort=$effort")" || {
+  if [ -n "$exclusive" ]; then
+    reply="$(_ccd_rpc announce "handle=$handle" "model=$model" "effort=$effort" "exclusive=1")"
+  else
+    reply="$(_ccd_rpc announce "handle=$handle" "model=$model" "effort=$effort")"
+  fi
+  [ $? -eq 0 ] || {
     echo "ccd announce: broker unreachable at $CCD_SOCKET" >&2
     return 1
   }
@@ -396,7 +409,7 @@ usage: ccd <subcommand> [args]
 
   ccd send <to> <msg> [-f from]
   ccd recv [<handle>] [-t timeout]      ($CCD_HANDLE is the default handle)
-  ccd announce [<handle>] <model> <effort>
+  ccd announce [<handle>] <model> <effort> [--exclusive]
   ccd ret [<handle>]
   ccd claim <worker> [<dispatcher>] [--force]
   ccd release <worker> [--force]
