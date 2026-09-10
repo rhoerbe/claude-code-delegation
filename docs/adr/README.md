@@ -12,3 +12,6 @@ implementing design and `../../PRD.md` for the original requirements.
 | [0003](0003-dequeue-on-ack-read-receipt.md) | Delivery is acknowledged by a kernel read-receipt, not by the client saying so |
 | [0004](0004-one-transport-behind-a-seam.md) | One transport, behind a seam, with no plugin system |
 | [0005](0005-participants-are-interactive-sessions.md) | ccd participants are interactive sessions, never `claude --bg` |
+| [0006](0006-one-boundary-uid-authenticates-claims-authorize.md) | One security boundary: peer-uid authenticates, claims authorize |
+| [0007](0007-affiliation-is-claimed-not-declared.md) | A worker's dispatcher is claimed, not declared |
+| [0008](0008-dashboard-is-metadata-wide-content-scoped.md) | The fleet dashboard is system-wide in metadata, scoped in content |
