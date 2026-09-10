@@ -47,6 +47,7 @@ import pwd
 import select
 import socket
 import struct
+import sys
 import termios
 import threading
 import time
@@ -70,6 +71,23 @@ _POLLRDHUP = getattr(select, "POLLRDHUP", 0)
 _DEAD = select.POLLERR | select.POLLNVAL
 _READABLE = select.POLLIN | _POLLRDHUP
 _SIOCOUTQ = getattr(termios, "TIOCOUTQ", 0x5411)
+
+
+def _warn(msg: str) -> None:
+    """Diagnostic to the broker's stderr, which the broker log captures.
+
+    Re-queueing a reserved message is the one place this transport can turn a
+    correct single delivery into a duplicate one (the client took the reply,
+    we concluded it had not), and it is invisible from either side when it
+    happens. Issue #3 reported exactly that and could not be diagnosed after
+    the fact, because nothing recorded *which* of the failure paths fired.
+    So every re-queue says so, with its reason.
+    """
+    print(
+        f"[{time.strftime('%Y-%m-%dT%H:%M:%S')}] ccd-broker: {msg}",
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 def default_socket_path() -> str:
@@ -118,7 +136,9 @@ class _ClientContext:
             if flags & select.POLLIN:
                 try:
                     data = self._conn.recv(4096)
-                except OSError:
+                except OSError as exc:
+                    _warn(f"deliver: recv() failed while awaiting ack ({exc}); "
+                          "re-queueing")
                     return False
                 if data == b"":
                     self._drop_readable()  # half-close only; peer still reads
@@ -136,7 +156,8 @@ class _ClientContext:
         """
         try:
             self._conn.sendall(_encode(resp))
-        except OSError:
+        except OSError as exc:
+            _warn(f"deliver: peer gone before the reply was sent ({exc}); re-queueing")
             return False  # peer was already gone
 
         deadline = time.monotonic() + ACK_TIMEOUT
@@ -144,16 +165,24 @@ class _ClientContext:
         while True:
             flags = self._flags(0)
             if flags & _DEAD:
+                _warn("deliver: POLLERR/POLLNVAL before ack — peer died with the "
+                      "reply unread; re-queueing")
                 return False  # ECONNRESET: died with the reply unread
             unread = self._unread_bytes()
             if unread == 0:
                 # Re-check: a close that *discarded* the reply also empties the
                 # queue, but sets sk_err first, so a POLLERR here disambiguates.
-                return not (self._flags(0) & _DEAD)
+                if self._flags(0) & _DEAD:
+                    _warn("deliver: send queue emptied by a close that discarded "
+                          "the reply (POLLERR on re-check); re-queueing")
+                    return False
+                return True
             if flags & select.POLLIN:
                 try:
                     data = self._conn.recv(4096)
-                except OSError:
+                except OSError as exc:
+                    _warn(f"deliver: recv() failed while awaiting ack ({exc}); "
+                          "re-queueing")
                     return False
                 if data == b"":
                     self._drop_readable()
