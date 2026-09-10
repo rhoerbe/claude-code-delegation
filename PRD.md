@@ -23,8 +23,8 @@ calls — there is no process to keep alive.
 **A resident session is different: it survives the limit and waits.** The whole point of
 this project is to convert a resume-from-evidence problem into a stay-alive problem.
 
-Cost is the second driver. Measured in `hosting#49`, delegated work is **60–70% of output
-tokens** — so routing *worker* traffic to a cheaper backend captures most of the spend.
+Cost is the second driver. Measured in the author's private deployment repo, delegated
+work is **60–70% of output tokens** — so routing *worker* traffic to a cheaper backend captures most of the spend.
 
 ## 2. Requirements
 
@@ -142,28 +142,31 @@ two audiences — human-readable in the issue, machine-parseable by the Runner.
 
 ## 5. Model routing
 
-Realises the **per-subagent** routing unit of `hosting#88`, whose other units
-(per-session ergonomics, budget guardrails) remain that issue's concern.
+Realises the **per-subagent** routing unit of a separate cost-aware-routing effort in
+the author's private deployment repo, whose other units (per-session ergonomics, budget
+guardrails) remain that effort's concern.
 
 * A **Plan names a Tier on a Profile** (`sonnet` on `glm`), never a raw model string.
-  Slots get retuned — `hosting#49` already did it once — and plans naming models rot with
-  them.
-* Tier vocabulary reuses `fable`/`opus`/`sonnet`/`haiku`, because `claude-glm` already
-  exports `ANTHROPIC_DEFAULT_*_MODEL` so those aliases resolve to GLM models. The
+  Slots get retuned — that deployment has already done it once — and plans naming models
+  rot with them.
+* Tier vocabulary reuses `fable`/`opus`/`sonnet`/`haiku`, because an OpenRouter launcher
+  already exports `ANTHROPIC_DEFAULT_*_MODEL`, so those aliases resolve to that backend's
+  models. The
   translation layer exists; a neutral vocabulary would only undo it.
 * **A Profile is a namespace, not a setting.** Session registries are scoped per
   `CLAUDE_CONFIG_DIR` — verified disjoint, 5 sessions against 2, zero overlap. Every
   dispatch, poll, stop and attach carries its Profile's environment.
 * The Runner treats a Profile as an **opaque "how to invoke" record**. It never
-  interprets the fields. If `hosting#88` later adopts a routing proxy, `profiles.yaml`
+  interprets the fields. If that routing effort later adopts a proxy, `profiles.yaml`
   is rewritten and nothing else is.
 * **Concurrency caps apply per Quota Pool**, not globally: one worker on the Anthropic
   subscription pool, N on OpenRouter. Two workers on one pool exhaust it twice as fast
   and then block together; two workers on different pools are genuinely independent.
   Quota pools are the only real parallelism available.
 * **No automatic cross-Profile substitution.** A phase may declare that it tolerates it;
-  otherwise the Runner waits. `hosting#69` documents a silent opus-fallback leak — silent
-  cross-provider substitution is a known hazard here, not a hypothetical one.
+  otherwise the Runner waits. A silent opus-fallback leak is documented in that
+  deployment repo — silent cross-provider substitution is a known hazard here, not a
+  hypothetical one.
 
 ## 6. Security and resource management
 
@@ -206,7 +209,7 @@ Each of these is a bug the Runner would otherwise ship with — all observed in 
   before the wall instead of discovering it by hitting it.
 * **Whether workers survive a daemon restart.** Workers outlived their dispatching shell;
   killing the daemon under load was not tested.
-* **Budget guardrail interaction.** If `hosting#88` lands a layer that downgrades or
+* **Budget guardrail interaction.** If a budget-guardrail layer lands that downgrades or
   refuses a dispatch, that is a new blocked state.
 
 ## 9. MVP acceptance

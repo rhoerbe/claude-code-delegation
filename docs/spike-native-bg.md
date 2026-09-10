@@ -53,7 +53,7 @@ Polled transitions, two concurrent workers:
 
 ```json
 { "session_id": "9cc97df8-…", "cwd": "…/w2",
-  "transcript_path": "/home/r2h2/.claude/projects/…/9cc97df8-….jsonl",
+  "transcript_path": "/home/<user>/.claude/projects/…/9cc97df8-….jsonl",
   "hook_event_name": "Notification",
   "message": "Claude is waiting for your input",
   "notification_type": "idle_prompt" }

@@ -29,8 +29,9 @@ context labelling on a host that has no SELinux.
   accepted cost of the MVP, and the reason the Freigang integration is not optional
   long-term.
 * **The dispatch mechanism must stay swappable.** The Runner treats "how to invoke a
-  worker" as opaque data, so moving to Freigang — or to a routing proxy, should
-  `hosting#88` adopt one — changes configuration rather than the Runner.
+  worker" as opaque data, so moving to Freigang — or to a routing proxy, should the
+  author's cost-aware-routing effort adopt one — changes configuration rather than the
+  Runner.
 * **Sessions must be reaped explicitly.** The container teardown that would have collected
   orphaned workers no longer exists.
 * **Freigang's vocabulary applies at the boundary.** A Worker Agent is a Freigang *Agent
