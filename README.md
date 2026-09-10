@@ -96,6 +96,10 @@ one-line usage).
 
 ## Quick usage example
 
+For the full operating walkthrough — starting participants, the dispatcher/worker
+loop end to end, steering by hand, and troubleshooting — see
+[`USAGE.md`](USAGE.md). The example below is the minimum that proves the wiring.
+
 This mirrors `tests/ccd_smoke.sh`, run against a real broker on this machine.
 
 Start the broker and confirm it's up:
