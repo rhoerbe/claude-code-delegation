@@ -20,6 +20,28 @@ request to farm out or a result coming back.
 
 There is no dispatcher/worker flag anywhere. The roles are a convention.
 
+## Who runs these commands
+
+Every `$ ccd ...` block in this document is the same CLI call whether a human
+types it at a login shell or a Claude session runs it as its own Bash tool
+call — the invocation and its output look identical either way, which is why
+both are shown the same console-block style throughout. Who actually runs
+each one differs, though:
+
+- **You, from any shell:** `ccd broker start/stop/status`, `ccd claim`/`ccd
+  release`, `ccd ls`, and Esc-interrupt steering. These are setup, ownership,
+  and observability — things done from outside the agent sessions.
+- **The participant session itself**, once it has loaded the `ccd-worker`
+  skill: `ccd announce`, `ccd recv`, `ccd send`, `ccd ret`. Sessions
+  communicate only through their own `ccd` tool calls (`PLAN-ccd-v2.md` §0) —
+  you never type these by hand; the skill (loaded via `/ccd-worker` in
+  [Starting a worker](#starting-a-worker)) is what drives the loop turn after
+  turn.
+
+[The loop, end to end](#the-loop-end-to-end) below shows the second kind —
+read `$ ccd send w1 "..." -f disp` there as *the dispatcher session's own tool
+call*, not something you type at a shell.
+
 ## One-time: start the broker
 
 ```console
@@ -93,9 +115,30 @@ identifiable alongside however many worker windows you also have open. A
 dispatcher usually runs at a higher tier than the workers it farms tasks out
 to, but nothing enforces that.
 
-There's nothing dispatcher-specific to configure beyond this — it earns the
-name by what it does with an incoming message (farm it out, or fold a result
-back in) and by `claim`ing workers, covered below.
+There's nothing else dispatcher-specific to configure — it earns the name by
+what it does with an incoming message (farm it out, or fold a result back
+in), and by claiming workers, which is the next step.
+
+### Assigning it workers
+
+A worker announces unowned; nothing routes to a dispatcher until it claims
+one. Claiming is trivial and typed from the dispatcher's own shell (its
+`CCD_HANDLE`, `disp` here, names which dispatcher gets it) — one `ccd claim`
+per worker, in any order, however many you want. `w2` here is a second worker
+started the same way as `w1` above, just with `CCD_HANDLE=w2` (and its own
+terminal/tmux window):
+
+```console
+$ CCD_HANDLE=disp ccd claim w1
+claimed w1 for disp
+$ CCD_HANDLE=disp ccd claim w2
+claimed w2 for disp
+```
+
+That's the whole assignment step — start as many workers as you like in any
+order, start the dispatcher, claim each one. The ownership mechanics this
+sets up (what claiming actually blocks, releasing, forced takeover) are
+covered in [Claiming workers](#claiming-workers) below.
 
 > **Do not use `claude --bg` for either role.** It propagates `--name` but not
 > `CCD_HANDLE`/`CCD_MODEL`/`CCD_EFFORT`, so the session cannot announce; and a
@@ -103,7 +146,10 @@ back in) and by `claim`ing workers, covered below.
 > interactive one can. Both reasons and their evidence are in
 > [ADR-0005](docs/adr/0005-participants-are-interactive-sessions.md).
 
-A participant's first action is to announce, which you can confirm from any shell:
+## Checking the roster
+
+A participant's first action is to announce, which you can confirm from any
+shell:
 
 ```console
 $ ccd ls
@@ -111,30 +157,43 @@ disp    opus    high    -
 w1      sonnet  medium  -
 ```
 
-The fourth column is the worker's owner, and `-` means unowned. A worker serves
-**one** dispatcher, and the dispatcher claims it rather than the worker
-declaring itself — so workers can be started in any order, before any
-dispatcher exists:
+The fourth column is the worker's owner, `-` meaning unowned.
 
-```console
-$ CCD_HANDLE=disp ccd claim w1
-claimed w1 for disp
-```
+Handles must be **unique among live sessions**. Two sessions sharing one
+handle race for the same queue, and each message goes to whichever calls
+`recv` first.
 
-From then on another dispatcher's `send` to `w1` is refused. Your own `ccd send`
-from a shell is not — a sender that claims no workers is never blocked, so you
-can always reach a worker by hand. `ccd release w1` frees it, and retiring the
-dispatcher frees everything it held.
+## Claiming workers
 
-If a dispatcher dies without retiring, its claims survive it — the roster has no
-liveness at all. `ccd claim w1 other-disp --force` takes the worker over.
+A worker serves **one** dispatcher, and the dispatcher claims it rather than
+the worker declaring itself — so workers can be started in any order, before
+any dispatcher exists (that's the `ccd claim` step shown in [Assigning it
+workers](#assigning-it-workers) above).
 
-Handles must be **unique among live sessions**. Two sessions sharing one handle
-race for the same queue, and each message goes to whichever calls `recv` first.
+From then on another dispatcher's `send` to that worker is refused. Your own
+`ccd send` from a shell is not — a sender that claims no workers is never
+blocked, so you can always reach a worker by hand. `ccd release w1` frees it,
+and retiring the dispatcher frees everything it held.
+
+If a dispatcher dies without retiring, its claims survive it — the roster has
+no liveness at all. `ccd claim w1 other-disp --force` takes the worker over.
+
+## Fleet dashboard
+
+Not built yet — [ADR-0008](docs/adr/0008-dashboard-is-metadata-wide-content-scoped.md)
+records the design only: a read-only view of every live session's metadata
+(handle, model, effort, status, cost, the claim graph above) system-wide, plus
+one bounded line of content per session (a dispatcher's goal, a worker's last
+task) shown one scope at a time, rendered from transcript JSON to markdown.
+Until it exists, `ccd ls` plus attaching to a session's own TUI is the whole
+visibility story.
 
 ## The loop, end to end
 
-From the dispatcher, hand `w1` a task:
+As covered in [Who runs these commands](#who-runs-these-commands): everything
+below is a tool call the dispatcher or worker session makes itself, shown as
+console output for readability — not something typed at a shell. The
+dispatcher hands `w1` a task with its own `ccd send`:
 
 ```console
 $ ccd send w1 "Summarise the failure modes in tests/ccd_smoke.sh" -f disp
@@ -147,8 +206,9 @@ sent (id=m1)
 disp: Summarise the failure modes in tests/ccd_smoke.sh
 ```
 
-The worker does the work, sends the result back to the handle it came from, and
-parks again — that last step is what keeps it available:
+The worker does the work, sends the result back to the handle it came from,
+and parks again with its own tool calls — that last step is what keeps it
+available:
 
 ```console
 $ ccd send disp "8 cases; only step 4 exercises re-queue-on-disconnect" -f w1
