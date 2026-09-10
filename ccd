@@ -6,7 +6,8 @@
 # the broker (the socket read here just waits — that is the zero-token park;
 # there is no polling loop anywhere in this file).
 #
-# Subcommands: send, recv, announce, ret, ls, ping, broker start|stop|status.
+# Subcommands: send, recv, announce, ret, claim, release, ls, dashboard, ping,
+# broker start|stop|status.
 set -u
 
 CCD_SOCKET="${CCD_SOCKET:-${XDG_RUNTIME_DIR:-/tmp}/ccd-${USER:-$(id -un)}.sock}"
@@ -184,12 +185,17 @@ cmd_announce() {
     echo "ccd announce: no handle given and \$CCD_HANDLE not set" >&2
     return 2
   fi
+  # Where this session lives, and which transcript is its own. Both are
+  # optional and unvalidated; they are the only thing correlating a handle to
+  # the transcript `ccd dashboard` reads its status/cost/content from
+  # (ADR-0008). $CLAUDE_CODE_SESSION_ID is set inside a Claude Code session and
+  # empty anywhere else, in which case the broker keeps whatever it already had.
+  local rpc_args=(announce "handle=$handle" "model=$model" "effort=$effort"
+                  "cwd=$PWD" "session=${CLAUDE_CODE_SESSION_ID:-}")
+  [ -n "$exclusive" ] && rpc_args+=("exclusive=1")
+
   local reply
-  if [ -n "$exclusive" ]; then
-    reply="$(_ccd_rpc announce "handle=$handle" "model=$model" "effort=$effort" "exclusive=1")"
-  else
-    reply="$(_ccd_rpc announce "handle=$handle" "model=$model" "effort=$effort")"
-  fi
+  reply="$(_ccd_rpc "${rpc_args[@]}")"
   [ $? -eq 0 ] || {
     echo "ccd announce: broker unreachable at $CCD_SOCKET" >&2
     return 1
@@ -288,6 +294,43 @@ else:
         print(str(w.get('handle')) + '\t' + str(w.get('model')) + '\t'
               + str(w.get('effort')) + '\t' + str(owner))
 "
+}
+
+# ccd dashboard [--scope <handle>] [--json] [--write <path>] [--rates <file>]
+#
+# Read-only (ADR-0008): metadata for every announced handle, and the one
+# content line of the scoped handle only. The roster comes from the broker;
+# everything richer than the roster comes from each session's own transcript,
+# never from the broker, which holds no content at all (ADR-0003).
+cmd_dashboard() {
+  local py_args=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --scope|--write|--rates)
+        # `shift 2` with nothing to shift would spin forever under `set -u`.
+        if [ $# -lt 2 ]; then
+          echo "ccd dashboard: $1 needs a value" >&2
+          return 2
+        fi
+        py_args+=("$1" "$2"); shift 2 ;;
+      --json) py_args+=(--json); shift ;;
+      -h|--help)
+        echo "usage: ccd dashboard [--scope <handle>] [--json] [--write <path>] [--rates <file>]"
+        return 0 ;;
+      *) echo "ccd dashboard: unknown argument: $1" >&2; return 2 ;;
+    esac
+  done
+
+  local reply
+  reply="$(_ccd_rpc roster)" || {
+    echo "ccd dashboard: broker unreachable at $CCD_SOCKET" >&2
+    return 1
+  }
+
+  local root
+  root="$(_ccd_repo_root)"
+  printf '%s\n' "$reply" | PYTHONPATH="$root${PYTHONPATH:+:$PYTHONPATH}" \
+    python3 -m ccd_dashboard "${py_args[@]+"${py_args[@]}"}"
 }
 
 cmd_ping() {
@@ -414,6 +457,7 @@ usage: ccd <subcommand> [args]
   ccd claim <worker> [<dispatcher>] [--force]
   ccd release <worker> [--force]
   ccd ls
+  ccd dashboard [--scope <handle>] [--json] [--write <path>] [--rates <file>]
   ccd ping
   ccd broker start|stop|status
 
@@ -437,6 +481,7 @@ main() {
     claim) cmd_claim "$@" ;;
     release) cmd_release "$@" ;;
     ls) cmd_ls "$@" ;;
+    dashboard) cmd_dashboard "$@" ;;
     ping) cmd_ping "$@" ;;
     broker) cmd_broker "$@" ;;
     -h|--help|help) _usage ;;

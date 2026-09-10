@@ -29,7 +29,7 @@ both are shown the same console-block style throughout. Who actually runs
 each one differs, though:
 
 - **You, from any shell:** `ccd broker start/stop/status`, `ccd claim`/`ccd
-  release`, `ccd ls`, and Esc-interrupt steering. These are setup, ownership,
+  release`, `ccd ls`, `ccd dashboard`, and Esc-interrupt steering. These are setup, ownership,
   and observability — things done from outside the agent sessions.
 - **The participant session itself**, once it has loaded the `ccd-worker`
   skill: `ccd announce`, `ccd recv`, `ccd send`, `ccd ret`. Sessions
@@ -180,13 +180,97 @@ no liveness at all. `ccd claim w1 other-disp --force` takes the worker over.
 
 ## Fleet dashboard
 
-Not built yet — [ADR-0008](docs/adr/0008-dashboard-is-metadata-wide-content-scoped.md)
-records the design only: a read-only view of every live session's metadata
-(handle, model, effort, status, cost, the claim graph above) system-wide, plus
-one bounded line of content per session (a dispatcher's goal, a worker's last
-task) shown one scope at a time, rendered from transcript JSON to markdown.
-Until it exists, `ccd ls` plus attaching to a session's own TUI is the whole
-visibility story.
+`ccd ls` answers *who is announced*. `ccd dashboard` answers *what is the
+fleet doing* — the same roster plus what each session is actually up to,
+rendered as markdown and typed from any shell:
+
+```console
+$ ccd dashboard
+# ccd fleet — 3 sessions (2026-01-02T03:04:05Z)
+
+| handle | role | model/effort | owner | status | last activity | cost | tree |
+|---|---|---|---|---|---|---|---|
+| `disp` | dispatcher | opus/high | — | parked | 2m ago | 1.4M | tooling@main |
+| `w1` | worker | sonnet/medium | `disp` | working | 8s ago | 902k | tooling@feat/x |
+| `w2` | worker | haiku/low | `disp` | parked | 41m ago | 120k | site@main |
+
+_Metadata is system-wide; content is scoped. Pass `--scope <handle>` for one
+session's current line._
+```
+
+**Metadata is system-wide, content is scoped**
+([ADR-0008](docs/adr/0008-dashboard-is-metadata-wide-content-scoped.md)). The
+table above is every announced handle. Seeing what one of them is *working on*
+means naming it:
+
+```console
+$ ccd dashboard --scope w1
+… the same table …
+
+## Scope: `w1` (worker)
+
+**Last task** (#42) — disp: Summarise the failure modes in tests/ccd_smoke.sh
+```
+
+One bounded line: for a worker the last task it received, for a dispatcher the
+goal it was given. No single rendered view ever contains two sessions' content,
+which is the point — a view holding several clients' working material is
+exactly the adjacency the rest of this design avoids creating.
+
+`status` is read off the session's transcript: **parked** (blocked in `ccd
+recv`, the zero-token idle state), **working** (a tool call outstanding, or a
+prompt not yet answered), **idle** (turn finished, waiting on a human), or
+**unknown** (no transcript to read — see below).
+
+### Where the numbers come from
+
+The broker holds no content and forgets a message the moment it is delivered
+([ADR-0003](docs/adr/0003-dequeue-on-ack-read-receipt.md)), so status, cost and
+content are read from each participant's **own Claude Code transcript**. The
+only thing linking a handle to its transcript is what the session reported when
+it announced: `ccd announce` sends its working directory and
+`$CLAUDE_CODE_SESSION_ID` along with the tier, and the transcript is then named
+deterministically under `~/.claude/projects/`. Nothing about this is verified —
+like `-f` on a send, it is self-asserted
+([ADR-0006](docs/adr/0006-one-boundary-uid-authenticates-claims-authorize.md)).
+
+A participant that reported neither — a session on a backend that keeps no such
+transcript, or a handle announced by hand from a shell — still appears in the
+table, with `unknown` status and an empty cost. That is the honest answer, not
+a failure.
+
+Cost is reported in tokens. A dollar figure needs prices, which are
+vendor-specific and go stale, so none ship here: pass your own table with
+`--rates`, a JSON object of `{"<model>": {"input": …, "output": …,
+"cache_read": …, "cache_creation": …}}` in USD per million tokens. Any model in
+the fleet that your table does not price leaves the whole figure blank rather
+than quietly undercounting.
+
+### The JSON model, and where it may not be written
+
+`--json` prints the machine-readable model the markdown is rendered from.
+It is **ephemeral by default** — printed, never stored — because it is an
+aggregate of several sessions' material. `--write <path>` puts it on disk, and
+**refuses any path inside a git working tree**:
+
+```console
+$ ccd dashboard --scope w1 --write ./fleet.json
+ccd dashboard: refusing to write inside the git working tree at /home/you/src/tooling: …
+$ ccd dashboard --scope w1 --write "$XDG_RUNTIME_DIR/fleet.json"
+wrote /run/user/1000/fleet.json
+```
+
+That refusal is the mechanism that stops one client's content being committed
+into another client's repository — the realistic form of this leak, rather than
+the dramatic one. There is no override flag.
+
+### It cannot do anything
+
+The dashboard is **read-only**: no stop, no retire, no redirect, and its only
+broker call is `roster`. Giving a view write power would need an authorization
+story and ADR-0006 leaves no principals to write one against. Control stays in
+the participant sessions, where a human is already attached — Esc into the
+session's own TUI, or `ccd send` it something from a shell.
 
 ## The loop, end to end
 
@@ -254,6 +338,8 @@ message simply queues for a session that will never collect it.
 | A worker is stuck claimed by a dispatcher that no longer exists | Expected — claims have no liveness. Force the claim over. |
 | `handle 'w1' is already announced as …` | A live handle, different tier. Retire it, or pass a different handle. Re-announcing the *same* tier is allowed, so Esc-interrupt recovery still works. |
 | A task arrives twice | Known, unexplained — see issue #3. Every re-queue is logged to the broker's stderr with its reason; the log sits next to the pidfile. |
+| `ccd dashboard` shows `unknown` status and no cost for a handle | That session announced no working directory or session id — announced by hand from a shell, or running on a backend that keeps no Claude Code transcript. Nothing is broken; there is simply nothing to read. |
+| `ccd dashboard --write` refuses the path | It is inside a git working tree, deliberately and without an override. Write it to a state directory instead. |
 | The worker never loads the skill | It is installed as a flat `.md` instead of `ccd-worker/SKILL.md`. |
 | `ccd broker start` says it is already running | A live socket exists. `ccd broker status`, and check for a stray second broker. |
 

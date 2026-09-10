@@ -10,7 +10,9 @@ State (all in-memory, no persistence — a broker restart means empty queues and
 an empty roster; workers re-`announce` on their next start):
 
     queues:  <handle> -> [msg, msg, ...]     FIFO, one deque per handle
-    roster:  <handle> -> {model, effort, owner}   owner=None until claimed
+    roster:  <handle> -> {model, effort, owner, cwd, session}
+                                             owner=None until claimed;
+                                             cwd/session None unless announced
 
 Wire model — one logical request per connection, line-delimited JSON:
 
@@ -23,13 +25,13 @@ Wire model — one logical request per connection, line-delimited JSON:
 | recv     | {handle, timeout?}      | {ok:true, from, msg} / {ok:false,         |
 |          |                         |  reason:"timeout"}          *blocking*    |
 | announce | {handle, model, effort, | {ok:true} / {ok:false} if the handle is   |
-|          |  exclusive?, force?}    |  live with a different model/effort, or   |
-|          |                         |  live at all when exclusive               |
+|          |  cwd?, session?,        |  live with a different model/effort, or   |
+|          |  exclusive?, force?}    |  live at all when exclusive               |
 | retire   | {handle}                | {ok:true}  (releases anything it claimed) |
 | claim    | {handle, owner, force?} | {ok:true} / {ok:false} if already claimed |
 | release  | {handle, owner?}        | {ok:true}                                 |
 | roster   | {}                      | {ok:true, workers:[{handle,model,effort,  |
-|          |                         |  owner}]}                                 |
+|          |                         |  owner,cwd,session}]}                     |
 | ping     | {}                      | {ok:true, version, started_at}            |
 
 Affiliation (ADR-0007): a worker announces *unowned*; a dispatcher `claim`s it,
@@ -38,6 +40,15 @@ a worker another dispatcher holds — but never refuses a sender that claims
 nothing, so a human at a third shell can always reach any worker. Sender
 identity is self-asserted (ADR-0006), so this stops a confused dispatcher, not a
 dishonest one.
+
+Where the dashboard's data comes from (ADR-0008): `announce` carries two
+optional self-asserted fields, `cwd` and `session`, and `roster` hands them
+back untouched. They are the *only* correlation between a handle and the
+session's own transcript, which is where the dashboard reads working tree,
+status, cost and content — the broker stores no content and learns nothing
+about a message it has delivered (ADR-0003). Both are self-asserted like
+`from` (ADR-0006): they prevent an accident, not a lie. The broker neither
+validates them nor reads a transcript itself.
 
 Atomic dequeue-on-ack (the load-bearing rule, PLAN §5.1/§8): `recv` *reserves*
 a message by popping it, but the message is only considered consumed once the
@@ -55,7 +66,7 @@ import time
 from collections import deque
 from typing import Any, Callable, Optional, Protocol, runtime_checkable
 
-VERSION = "1.1.0"  # 1.1: roster ownership, claim/release (ADR-0007)
+VERSION = "1.2.0"  # 1.2: announce carries cwd/session for the dashboard (ADR-0008)
 
 #: `recv` timeout when the client does not supply one (24h — a parked worker).
 DEFAULT_RECV_TIMEOUT = 86400.0
@@ -203,6 +214,13 @@ class Broker:
             return _err("announce requires a non-empty string 'handle'")
         model = _as_text(args.get("model"))
         effort = _as_text(args.get("effort"))
+        # Where this session lives and which transcript is its own. Optional,
+        # unvalidated, and never read by the broker — they exist so `roster`
+        # can hand the dashboard something to correlate a handle with
+        # (ADR-0008). A participant that has neither (a non-Claude-Code
+        # backend, a shell) simply announces without them.
+        cwd = _as_opt_text(args.get("cwd"))
+        session = _as_opt_text(args.get("session"))
         force = bool(args.get("force"))
         # `exclusive` is for a caller that KNOWS it is starting a new session
         # — a launcher reserving a name before exec. For it, an identical
@@ -241,6 +259,15 @@ class Broker:
                 "effort": effort,
                 # A re-announce must not silently drop an existing claim.
                 "owner": live.get("owner") if live else None,
+                # Nor drop a known cwd/session because the re-announce came
+                # from somewhere that could not supply them (a plain shell has
+                # no $CLAUDE_CODE_SESSION_ID). Omitted means "unchanged", not
+                # "cleared".
+                "cwd": cwd if cwd is not None else (live.get("cwd") if live else None),
+                "session": (
+                    session if session is not None
+                    else (live.get("session") if live else None)
+                ),
             }
         return {"ok": True}
 
@@ -410,6 +437,19 @@ def _is_handle(value: Any) -> bool:
 
 def _as_text(value: Any) -> str:
     return "" if value is None else str(value)
+
+
+def _as_opt_text(value: Any) -> Optional[str]:
+    """Text, or None for both a missing field and an empty one.
+
+    The CLI always sends `cwd=`/`session=` even when it has nothing to put
+    there, so "" has to mean the same as absent — otherwise announcing from a
+    shell would blank what a session had already reported.
+    """
+    if value is None:
+        return None
+    text = str(value)
+    return text or None
 
 
 def serve(transport_factory: Callable[[Broker], Transport]) -> None:

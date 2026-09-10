@@ -88,6 +88,8 @@ ccd broker stop
 | `CCD_SOCKET` | `ccd`, `ccd_broker` | `${XDG_RUNTIME_DIR:-/tmp}/ccd-$USER.sock` | Unix socket path the broker listens on and the CLI connects to. Created mode `0600`; the broker rejects connections from other uids (`SO_PEERCRED`). |
 | `CCD_PIDFILE` | `ccd broker start/stop` | `${XDG_RUNTIME_DIR:-/tmp}/ccd-$USER.pid` | Where `ccd broker start` records the broker's pid so `ccd broker stop` can find and signal it. The broker's stdout/stderr log goes next to it, at the same path with `.log` in place of `.pid`. |
 | `CCD_HANDLE` | `ccd recv`/`announce`/`ret` | *(none — required if `<handle>` isn't passed positionally)* | Default handle for `recv`/`announce`/`ret` so a worker's skill/script doesn't have to hardcode it. |
+| `CCD_TRANSCRIPT_ROOT` | `ccd dashboard` | `${CLAUDE_CONFIG_DIR:-~/.claude}/projects` | Where Claude Code keeps per-project transcript directories. The dashboard is the one component that reads them (ADR-0008) — the broker and the rest of the CLI stay backend-agnostic and read no Claude-internal state at all. |
+| `CLAUDE_CODE_SESSION_ID` | `ccd announce` | *(set by Claude Code inside a session; empty elsewhere)* | Passed through to the broker so the dashboard can find that session's transcript. Announcing from a plain shell sends nothing and leaves whatever the session already reported. |
 | `CCD_MODEL`, `CCD_EFFORT` | worker skill (`skills/ccd-worker.md`) convention, not read by `ccd` itself | — | Passed as the `model`/`effort` args to `ccd announce`, so the roster (`ccd ls`) shows other participants which capability tier each handle carries. Set by whatever launches the session. |
 
 The broker itself takes no flags or config file — `$CCD_SOCKET` is its only
@@ -185,6 +187,7 @@ ccd ret [<handle>]
 ccd claim <worker> [<dispatcher>] [--force]   ($CCD_HANDLE is the dispatcher)
 ccd release <worker> [--force]
 ccd ls
+ccd dashboard [--scope <handle>] [--json] [--write <path>] [--rates <file>]
 ccd ping
 ccd broker start|stop|status
 ```
@@ -197,6 +200,15 @@ Sender identity is self-asserted, so this stops a confused dispatcher, not a
 dishonest one: see
 [ADR-0007](docs/adr/0007-affiliation-is-claimed-not-declared.md) and
 [ADR-0006](docs/adr/0006-one-boundary-uid-authenticates-claims-authorize.md).
+
+`ccd dashboard` is the read-only fleet view: metadata (handle, role, tier,
+claim graph, working tree, status, cost) for **every** announced handle, and
+one bounded content line — a dispatcher's goal, a worker's last task — for the
+**one** handle named by `--scope`, so no rendered view ever holds two clients'
+working material. Content and cost come from each session's own transcript,
+never from the broker, which stores none
+([ADR-0008](docs/adr/0008-dashboard-is-metadata-wide-content-scoped.md)). See
+[USAGE.md](USAGE.md#fleet-dashboard).
 
 Full protocol semantics (wire format, blocking/dequeue-on-ack, the
 `Transport` seam) are documented in `ccd_broker/broker.py` and
@@ -212,3 +224,8 @@ Full protocol semantics (wire format, blocking/dequeue-on-ack, the
 - [`tests/ccd_smoke.sh`](tests/ccd_smoke.sh) — an end-to-end smoke test
   against a private, throwaway broker instance. Run it with
   `tests/ccd_smoke.sh`.
+- [`tests/test_affiliation.py`](tests/test_affiliation.py),
+  [`tests/test_deliver_ack.py`](tests/test_deliver_ack.py),
+  [`tests/test_dashboard.py`](tests/test_dashboard.py) — claim-based
+  affiliation, dequeue-on-ack, and the dashboard. Each is a plain script with
+  no test framework; run it directly.
