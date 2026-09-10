@@ -13,8 +13,10 @@ hop happens entirely in `ccd` tool calls to a small broker process. Both
 sides stay ordinary interactive TUI sessions a human can attach to, watch,
 and steer at any time.
 
-Design record: [`PLAN-ccd-v2.md`](PLAN-ccd-v2.md) (the implementing design —
-architecture, wire protocol, and the rationale for every decision below) and
+Design record: [`docs/adr/`](docs/adr/) (the load-bearing decisions, one per
+file — start here if you are wondering *why* something looks the way it does),
+[`PLAN-ccd-v2.md`](PLAN-ccd-v2.md) (the full implementing design — architecture,
+wire protocol, and the rationale for every decision below) and
 [`PRD.md`](PRD.md) (the original product requirements).
 
 ## What this repo is not

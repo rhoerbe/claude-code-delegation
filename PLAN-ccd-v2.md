@@ -11,6 +11,11 @@ launchers/handles, lives in a separate **private deployment repo** (§9).
 Anyone should be able to use this repo without exposure to the author's
 settings.
 
+The decisions in this plan that are hard to reverse, surprising without context,
+and the result of a real trade-off are also recorded one-per-file in
+[`docs/adr/`](docs/adr/). This document stays the full implementing design; the
+ADRs are the short answers to "why is it like this?".
+
 ## 0. What this is, in one paragraph
 
 A small standalone message broker (`ccd-broker`) plus a thin CLI (`ccd`) that
