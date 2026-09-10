@@ -39,8 +39,38 @@ telling an agent what not to look at.
 
 ## Status
 
-Design complete, implementation not started. One question still blocks the last piece:
-what a usage limit actually emits. A tripwire is capturing it.
+**Superseded — retained as a design record, deliberately not merged.**
+
+This branch is the project's first design track (2026-08-07 → 2026-08-20). On 2026-08-29
+the repo restarted on `main` from a fresh root commit with a different architecture —
+`ccd`: a small socket broker over which *interactive*, human-attachable sessions on
+different backends hand each other tasks. See [`PLAN-ccd-v2.md`](../../blob/main/PLAN-ccd-v2.md)
+on `main`. The two histories share no merge base and the designs contradict each other,
+so there is nothing here to merge.
+
+`main`'s `PRD.md` is this branch's `PRD.md` pruned from 310 lines to 92, with the cuts
+marked by inline *(Removed: …)* notes. Everything cut — the Runner/Planner/Attendant
+model, the Verdict grammar, the quota-pool reasoning, the ADRs — survives only here.
+
+What is still worth reading, independent of which design won:
+
+* [`docs/spike-native-bg.md`](docs/spike-native-bg.md) — what `claude --bg`,
+  `claude agents --json` and hooks actually provide, WORKS/DOES-NOT-WORK with pasted
+  output (binary `2.1.232`).
+* [`docs/spike-auto-continue.md`](docs/spike-auto-continue.md) — why a `--bg` worker
+  **never** arms native `autoContinueAtUsageLimit` (binary `2.1.237`). This one is
+  load-bearing for `main`'s design too: it is why `ccd` participants must be started as
+  ordinary interactive or tmux sessions rather than with `--bg`.
+
+**Both spikes are version-stale.** They were run against `2.1.232`/`2.1.237`; the binary
+has since moved roughly thirty releases. ADR-0003 accepted that version-coupling risk on
+the strength of a startup assertion that the Runner would make — never implemented,
+because implementation never started. Re-run the spikes before relying on either.
+
+The design's own open questions (PRD §8) were never closed: what a *real* usage limit
+emits to a `--bg` worker (the `docs/spike-auto-continue.md` result came from a
+token-auth mock and may be an artefact of it), whether workers survive a daemon restart,
+and how a budget-guardrail layer would interact.
 
 ## Lineage
 
