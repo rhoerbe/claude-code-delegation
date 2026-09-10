@@ -44,7 +44,7 @@ telling an agent what not to look at.
 This branch is the project's first design track (2026-08-07 → 2026-08-20). On 2026-08-29
 the repo restarted on `main` from a fresh root commit with a different architecture —
 `ccd`: a small socket broker over which *interactive*, human-attachable sessions on
-different backends hand each other tasks. See [`PLAN-ccd-v2.md`](../../blob/main/PLAN-ccd-v2.md)
+different backends hand each other tasks. See [`PLAN-ccd-v2.md`](https://github.com/rhoerbe/claude-code-delegation/blob/main/PLAN-ccd-v2.md)
 on `main`. The two histories share no merge base and the designs contradict each other,
 so there is nothing here to merge.
 
