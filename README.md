@@ -182,10 +182,21 @@ ccd send <to> <msg> [-f from]
 ccd recv [<handle>] [-t timeout]      ($CCD_HANDLE is the default handle)
 ccd announce [<handle>] <model> <effort>
 ccd ret [<handle>]
+ccd claim <worker> [<dispatcher>] [--force]   ($CCD_HANDLE is the dispatcher)
+ccd release <worker> [--force]
 ccd ls
 ccd ping
 ccd broker start|stop|status
 ```
+
+A worker announces **unowned**; a dispatcher `claim`s it, exclusively. The
+broker then refuses another *dispatcher's* `send` to that worker — but never
+refuses a sender that claims nothing, so you can always reach any worker by
+hand from a third shell. Retiring a dispatcher releases everything it held.
+Sender identity is self-asserted, so this stops a confused dispatcher, not a
+dishonest one: see
+[ADR-0007](docs/adr/0007-affiliation-is-claimed-not-declared.md) and
+[ADR-0006](docs/adr/0006-one-boundary-uid-authenticates-claims-authorize.md).
 
 Full protocol semantics (wire format, blocking/dequeue-on-ack, the
 `Transport` seam) are documented in `ccd_broker/broker.py` and

@@ -10,7 +10,7 @@ State (all in-memory, no persistence — a broker restart means empty queues and
 an empty roster; workers re-`announce` on their next start):
 
     queues:  <handle> -> [msg, msg, ...]     FIFO, one deque per handle
-    roster:  <handle> -> {model, effort}
+    roster:  <handle> -> {model, effort, owner}   owner=None until claimed
 
 Wire model — one logical request per connection, line-delimited JSON:
 
@@ -22,10 +22,21 @@ Wire model — one logical request per connection, line-delimited JSON:
 | send     | {to, msg, from?}        | {ok:true, id}                             |
 | recv     | {handle, timeout?}      | {ok:true, from, msg} / {ok:false,         |
 |          |                         |  reason:"timeout"}          *blocking*    |
-| announce | {handle, model, effort} | {ok:true}                                 |
-| retire   | {handle}                | {ok:true}                                 |
-| roster   | {}                      | {ok:true, workers:[{handle,model,effort}]}|
-| ping     | {}                      | {ok:true, version}                        |
+| announce | {handle, model, effort, | {ok:true} / {ok:false} if the handle is   |
+|          |  force?}                |  live with a different model/effort       |
+| retire   | {handle}                | {ok:true}  (releases anything it claimed) |
+| claim    | {handle, owner, force?} | {ok:true} / {ok:false} if already claimed |
+| release  | {handle, owner?}        | {ok:true}                                 |
+| roster   | {}                      | {ok:true, workers:[{handle,model,effort,  |
+|          |                         |  owner}]}                                 |
+| ping     | {}                      | {ok:true, version, started_at}            |
+
+Affiliation (ADR-0007): a worker announces *unowned*; a dispatcher `claim`s it,
+exclusively and atomically. The broker then refuses a **dispatcher's** `send` to
+a worker another dispatcher holds — but never refuses a sender that claims
+nothing, so a human at a third shell can always reach any worker. Sender
+identity is self-asserted (ADR-0006), so this stops a confused dispatcher, not a
+dishonest one.
 
 Atomic dequeue-on-ack (the load-bearing rule, PLAN §5.1/§8): `recv` *reserves*
 a message by popping it, but the message is only considered consumed once the
@@ -43,7 +54,7 @@ import time
 from collections import deque
 from typing import Any, Callable, Optional, Protocol, runtime_checkable
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"  # 1.1: roster ownership, claim/release (ADR-0007)
 
 #: `recv` timeout when the client does not supply one (24h — a parked worker).
 DEFAULT_RECV_TIMEOUT = 86400.0
@@ -155,6 +166,17 @@ class Broker:
         if sender is None or sender == "":
             sender = "unknown"
         with self._cond:
+            # Refuse only a *dispatcher's* send to a worker someone else
+            # holds. A sender that claims nothing is never refused: losing
+            # that escape hatch would mean a stuck worker could only be fixed
+            # by killing it (ADR-0007).
+            target = self._roster.get(to)
+            owner = target.get("owner") if target else None
+            if owner is not None and owner != sender and self._owns_any(sender):
+                return _err(
+                    f"'{to}' is claimed by '{owner}'; "
+                    f"'{sender}' claims workers of its own and may not send to it"
+                )
             self._next_id += 1
             item = {"id": f"m{self._next_id}", "from": sender, "msg": msg}
             self._queues.setdefault(to, deque()).append(item)
@@ -178,13 +200,33 @@ class Broker:
         handle = args.get("handle")
         if not _is_handle(handle):
             return _err("announce requires a non-empty string 'handle'")
-        entry = {
-            "handle": handle,
-            "model": _as_text(args.get("model")),
-            "effort": _as_text(args.get("effort")),
-        }
+        model = _as_text(args.get("model"))
+        effort = _as_text(args.get("effort"))
+        force = bool(args.get("force"))
         with self._cond:
-            self._roster[handle] = entry
+            live = self._roster.get(handle)
+            if live is not None and not force:
+                # Idempotent re-announce is the common case and must keep
+                # working: a session Esc-interrupted mid-park re-announces the
+                # same handle at the same tier, and locking it out of its own
+                # identity would be worse than the hijack this guards against.
+                # A *different* tier means a different session took the name,
+                # which is the accident worth catching. Forgery is out of scope
+                # (ADR-0006) — an impostor announcing an identical tier is
+                # indistinguishable from the real thing and always will be.
+                if live["model"] != model or live["effort"] != effort:
+                    return _err(
+                        f"handle '{handle}' is already announced as "
+                        f"{live['model']}/{live['effort']}; retire it first, "
+                        f"or pass force"
+                    )
+            self._roster[handle] = {
+                "handle": handle,
+                "model": model,
+                "effort": effort,
+                # A re-announce must not silently drop an existing claim.
+                "owner": live.get("owner") if live else None,
+            }
         return {"ok": True}
 
     def _m_retire(self, args: dict, ctx: Optional[ClientContext]) -> Optional[dict]:
@@ -196,7 +238,66 @@ class Broker:
             # have undelivered mail, and a restarted worker re-announces under
             # the same handle and picks it up.
             self._roster.pop(handle, None)
+            # Releasing what it claimed is the only automatic recovery there
+            # is: the roster has no liveness, so a dispatcher that exits
+            # without retiring holds its workers until someone forces them
+            # free (ADR-0007).
+            for entry in self._roster.values():
+                if entry.get("owner") == handle:
+                    entry["owner"] = None
         return {"ok": True}
+
+    def _owns_any(self, handle: str) -> bool:
+        """Is this handle a dispatcher — i.e. does it hold at least one claim?
+
+        Caller must hold the lock.
+        """
+        return any(e.get("owner") == handle for e in self._roster.values())
+
+    def _m_claim(self, args: dict, ctx: Optional[ClientContext]) -> Optional[dict]:
+        handle = args.get("handle")
+        owner = args.get("owner")
+        if not _is_handle(handle):
+            return _err("claim requires a non-empty string 'handle'")
+        if not _is_handle(owner):
+            return _err("claim requires a non-empty string 'owner'")
+        if handle == owner:
+            return _err("a handle cannot claim itself")
+        force = bool(args.get("force"))
+        with self._cond:
+            entry = self._roster.get(handle)
+            if entry is None:
+                return _err(f"no announced handle '{handle}' to claim")
+            held = entry.get("owner")
+            # Exclusive and atomic: two dispatchers racing for one worker
+            # resolve here rather than both believing they won.
+            if held is not None and held != owner and not force:
+                return _err(
+                    f"'{handle}' is already claimed by '{held}' "
+                    f"(pass force to take it over)"
+                )
+            entry["owner"] = owner
+        return {"ok": True, "handle": handle, "owner": owner}
+
+    def _m_release(self, args: dict, ctx: Optional[ClientContext]) -> Optional[dict]:
+        handle = args.get("handle")
+        if not _is_handle(handle):
+            return _err("release requires a non-empty string 'handle'")
+        owner = args.get("owner")
+        with self._cond:
+            entry = self._roster.get(handle)
+            if entry is None:
+                return _err(f"no announced handle '{handle}' to release")
+            held = entry.get("owner")
+            if held is None:
+                return {"ok": True, "handle": handle}  # already free
+            if _is_handle(owner) and held != owner and not bool(args.get("force")):
+                return _err(
+                    f"'{handle}' is claimed by '{held}', not '{owner}' "
+                    f"(pass force to release it anyway)"
+                )
+            entry["owner"] = None
+        return {"ok": True, "handle": handle}
 
     def _m_roster(self, args: dict, ctx: Optional[ClientContext]) -> Optional[dict]:
         with self._cond:
@@ -204,7 +305,7 @@ class Broker:
         return {"ok": True, "workers": workers}
 
     def _m_ping(self, args: dict, ctx: Optional[ClientContext]) -> Optional[dict]:
-        return {"ok": True, "version": VERSION}
+        return {"ok": True, "version": VERSION, "started_at": self.started_at}
 
     # ------------------------------------------------------------------
     # blocking recv + dequeue-on-ack
@@ -276,6 +377,8 @@ _METHODS: dict[str, Callable[[Broker, dict, Optional[ClientContext]], Optional[d
     "send": Broker._m_send,
     "recv": Broker._m_recv,
     "announce": Broker._m_announce,
+    "claim": Broker._m_claim,
+    "release": Broker._m_release,
     "retire": Broker._m_retire,
     "roster": Broker._m_roster,
     "ping": Broker._m_ping,

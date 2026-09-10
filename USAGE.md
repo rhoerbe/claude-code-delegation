@@ -69,9 +69,27 @@ A worker's first action is to announce, which you can confirm from any shell:
 
 ```console
 $ ccd ls
-disp    opus    high
-w1      sonnet  medium
+disp    opus    high    -
+w1      sonnet  medium  -
 ```
+
+The fourth column is the worker's owner, and `-` means unowned. A worker serves
+**one** dispatcher, and the dispatcher claims it rather than the worker
+declaring itself — so workers can be started in any order, before any
+dispatcher exists:
+
+```console
+$ CCD_HANDLE=disp ccd claim w1
+claimed w1 for disp
+```
+
+From then on another dispatcher's `send` to `w1` is refused. Your own `ccd send`
+from a shell is not — a sender that claims no workers is never blocked, so you
+can always reach a worker by hand. `ccd release w1` frees it, and retiring the
+dispatcher frees everything it held.
+
+If a dispatcher dies without retiring, its claims survive it — the roster has no
+liveness at all. `ccd claim w1 other-disp --force` takes the worker over.
 
 Handles must be **unique among live sessions**. Two sessions sharing one handle
 race for the same queue, and each message goes to whichever calls `recv` first.
@@ -134,6 +152,9 @@ message simply queues for a session that will never collect it.
 | `ccd recv: no handle given and $CCD_HANDLE not set` (exit 2) | Identity not in the environment. If the session was started with `claude --bg`, that is why — see above. |
 | Messages sent but never received; both sides look healthy | Two brokers. Check `CCD_SOCKET` on **both** sides resolves to the same path. |
 | `ccd ls` is empty but workers are running | The broker restarted. Queues and the roster are in-memory only, and neither side is told. Every participant must re-announce. |
+| `'w1' is claimed by 'disp'` on send | Another dispatcher holds that worker. `ccd release w1`, or `ccd claim w1 <you> --force`. |
+| A worker is stuck claimed by a dispatcher that no longer exists | Expected — claims have no liveness. Force the claim over. |
+| `handle 'w1' is already announced as …` | A live handle, different tier. Retire it, or pass a different handle. Re-announcing the *same* tier is allowed, so Esc-interrupt recovery still works. |
 | A task arrives twice | Known, unexplained — see issue #3. Every re-queue is logged to the broker's stderr with its reason; the log sits next to the pidfile. |
 | The worker never loads the skill | It is installed as a flat `.md` instead of `ccd-worker/SKILL.md`. |
 | `ccd broker start` says it is already running | A live socket exists. `ccd broker status`, and check for a stray second broker. |

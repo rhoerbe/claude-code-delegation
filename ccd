@@ -202,6 +202,60 @@ cmd_ret() {
   _ccd_ok_or_err "$reply" "retired $handle"
 }
 
+# ccd claim <worker> [<dispatcher>] [--force]   ($CCD_HANDLE is the dispatcher)
+cmd_claim() {
+  local force="" args=() worker="" owner=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --force|-f) force="1"; shift ;;
+      *) args+=("$1"); shift ;;
+    esac
+  done
+  case ${#args[@]} in
+    2) worker="${args[0]}"; owner="${args[1]}" ;;
+    1) worker="${args[0]}"; owner="${CCD_HANDLE:-}" ;;
+    *)
+      echo "usage: ccd claim <worker> [<dispatcher>] [--force]  (\$CCD_HANDLE is the default dispatcher)" >&2
+      return 2
+      ;;
+  esac
+  if [ -z "$owner" ]; then
+    echo "ccd claim: no dispatcher given and \$CCD_HANDLE not set" >&2
+    return 2
+  fi
+  local reply
+  if [ -n "$force" ]; then
+    reply="$(_ccd_rpc claim "handle=$worker" "owner=$owner" "force=1")"
+  else
+    reply="$(_ccd_rpc claim "handle=$worker" "owner=$owner")"
+  fi
+  [ $? -eq 0 ] || { echo "ccd claim: broker unreachable at $CCD_SOCKET" >&2; return 1; }
+  _ccd_ok_or_err "$reply" "claimed $worker for $owner"
+}
+
+# ccd release <worker> [--force]
+cmd_release() {
+  local force="" args=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --force|-f) force="1"; shift ;;
+      *) args+=("$1"); shift ;;
+    esac
+  done
+  if [ ${#args[@]} -ne 1 ]; then
+    echo "usage: ccd release <worker> [--force]" >&2
+    return 2
+  fi
+  local worker="${args[0]}" owner="${CCD_HANDLE:-}" reply
+  if [ -n "$force" ]; then
+    reply="$(_ccd_rpc release "handle=$worker" "owner=$owner" "force=1")"
+  else
+    reply="$(_ccd_rpc release "handle=$worker" "owner=$owner")"
+  fi
+  [ $? -eq 0 ] || { echo "ccd release: broker unreachable at $CCD_SOCKET" >&2; return 1; }
+  _ccd_ok_or_err "$reply" "released $worker"
+}
+
 cmd_ls() {
   local reply
   reply="$(_ccd_rpc roster)" || {
@@ -217,7 +271,9 @@ if not workers:
     print('(no workers announced)')
 else:
     for w in workers:
-        print(str(w.get('handle')) + '\t' + str(w.get('model')) + '\t' + str(w.get('effort')))
+        owner = w.get('owner') or '-'
+        print(str(w.get('handle')) + '\t' + str(w.get('model')) + '\t'
+              + str(w.get('effort')) + '\t' + str(owner))
 "
 }
 
@@ -229,7 +285,14 @@ cmd_ping() {
   }
   _ccd_fmt "$reply" "
 if d.get('ok'):
-    print('ok (ccd-broker ' + str(d.get('version', '?')) + ')')
+    line = 'ok (ccd-broker ' + str(d.get('version', '?')) + ')'
+    started = d.get('started_at')
+    if started:
+        import time as _t
+        up = max(0, int(_t.time() - float(started)))
+        h, rem = divmod(up, 3600)
+        line += ' up ' + (str(h) + 'h' if h else '') + str(rem // 60) + 'm'
+    print(line)
 else:
     print('ccd ping: ' + str(d.get('reason', 'error')), file=sys.stderr)
     sys.exit(1)
@@ -335,6 +398,8 @@ usage: ccd <subcommand> [args]
   ccd recv [<handle>] [-t timeout]      ($CCD_HANDLE is the default handle)
   ccd announce [<handle>] <model> <effort>
   ccd ret [<handle>]
+  ccd claim <worker> [<dispatcher>] [--force]
+  ccd release <worker> [--force]
   ccd ls
   ccd ping
   ccd broker start|stop|status
@@ -356,6 +421,8 @@ main() {
     recv) cmd_recv "$@" ;;
     announce) cmd_announce "$@" ;;
     ret) cmd_ret "$@" ;;
+    claim) cmd_claim "$@" ;;
+    release) cmd_release "$@" ;;
     ls) cmd_ls "$@" ;;
     ping) cmd_ping "$@" ;;
     broker) cmd_broker "$@" ;;
