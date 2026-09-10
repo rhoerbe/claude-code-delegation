@@ -42,7 +42,7 @@ export CCD_SOCKET="/run/user/$(id -u)/ccd-$USER.sock"
 
 This is the single most common way a working setup appears to be broken.
 
-## Starting a participant
+## Starting a worker
 
 Each participant is an ordinary interactive Claude Code session, started in its
 own terminal or tmux window, with its identity in the environment:
@@ -50,22 +50,60 @@ own terminal or tmux window, with its identity in the environment:
 ```bash
 export CCD_SOCKET="/run/user/$(id -u)/ccd-$USER.sock"
 export CCD_HANDLE=w1 CCD_MODEL=sonnet CCD_EFFORT=medium
-claude          # or whichever launcher selects the backend you want
+claude --model sonnet --effort medium --name w1 "/ccd-worker"
 ```
 
-Then tell the session it is a ccd participant, so it loads the `ccd-worker`
-skill and starts the loop. The skill is installed at
-`~/.claude/skills/ccd-worker/SKILL.md` — a **directory containing `SKILL.md`**,
-which is the shape the loader scans for. A flat `ccd-worker.md` file is silently
-never discovered.
+That's the Claude Code CLI's own flags, not `ccd`'s — worth spelling out since
+it's easy to set only the `CCD_*` env vars and assume they do this too:
 
-> **Do not use `claude --bg` for a participant.** It propagates `--name` but not
+- `--model`/`--effort` pick what actually runs this session. `CCD_MODEL`/
+  `CCD_EFFORT` are a separate, unread-by-`ccd` convention (see README's
+  environment-variable table) — the worker skill only echoes them onto the
+  roster via `ccd announce` so other participants can see the tier. Nothing
+  keeps the two pairs in sync automatically; set them to matching values
+  yourself, or `ccd ls` ends up advertising a tier the session isn't actually
+  running at.
+- `--name` sets Claude Code's own display name — shown in the prompt box, the
+  `/resume` picker, and the terminal title. Without it a session has no
+  default name, which gets confusing fast once more than one worker window is
+  open. It's independent of `CCD_HANDLE`; matching them (as above) is just
+  convenient, not required.
+- Passing `/ccd-worker` as the trailing prompt loads the skill and starts the
+  loop immediately, instead of needing to tell the session by hand afterward.
+
+The skill is installed at `~/.claude/skills/ccd-worker/SKILL.md` — a
+**directory containing `SKILL.md`**, which is the shape the loader scans for.
+A flat `ccd-worker.md` file is silently never discovered.
+
+## Starting a dispatcher
+
+A dispatcher is launched exactly the same way — same `claude` invocation shape,
+same `ccd-worker` skill (it covers both roles; see [skills/ccd-worker.md](skills/ccd-worker.md)
+§3). Only the handle and tier change, and what you do once a message arrives:
+
+```bash
+export CCD_SOCKET="/run/user/$(id -u)/ccd-$USER.sock"
+export CCD_HANDLE=disp CCD_MODEL=opus CCD_EFFORT=high
+claude --model opus --effort high --name disp "/ccd-worker"
+```
+
+The three bullets above apply here too — set `--model`/`--effort` to match
+`CCD_MODEL`/`CCD_EFFORT` yourself, and `--name` so the dispatcher's terminal is
+identifiable alongside however many worker windows you also have open. A
+dispatcher usually runs at a higher tier than the workers it farms tasks out
+to, but nothing enforces that.
+
+There's nothing dispatcher-specific to configure beyond this — it earns the
+name by what it does with an incoming message (farm it out, or fold a result
+back in) and by `claim`ing workers, covered below.
+
+> **Do not use `claude --bg` for either role.** It propagates `--name` but not
 > `CCD_HANDLE`/`CCD_MODEL`/`CCD_EFFORT`, so the session cannot announce; and a
 > backgrounded session cannot resume itself across a usage limit, while an
 > interactive one can. Both reasons and their evidence are in
 > [ADR-0005](docs/adr/0005-participants-are-interactive-sessions.md).
 
-A worker's first action is to announce, which you can confirm from any shell:
+A participant's first action is to announce, which you can confirm from any shell:
 
 ```console
 $ ccd ls
