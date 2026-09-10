@@ -314,6 +314,14 @@ implementing *this* repo does not touch hosting.
   path, lifecycle, and skill's send semantics are identical; only the recv step
   moves from the worker's own turn to a `bypassPermissions`-matched `--bg` peer
   that blocks on `recv` and `SendMessage`s the worker. No fundamental redesign.
+  **Caveat before building it:** `PRD.md` calls the spend-limit stall moot, but
+  that only holds for *attended* sessions — `--bg` sets
+  `CLAUDE_CODE_SESSION_KIND=bg`, which fails the `isInteractive() && !isBg()`
+  gate on `autoContinueAtUsageLimit`, so a `--bg` helper parked on `recv` across
+  a limit never resumes itself (evidence:
+  `docs/spike-auto-continue.md` on the `design/runner-over-native-bg` branch;
+  #4 is the same conclusion reached from the env-var side). Moving `recv` into a
+  `--bg` peer therefore reintroduces a failure the current shape does not have.
 - Other `Transport` impls (TCP, Matrix, MQTT) — new classes only, no broker
   change. Do not build the plugin system until a second impl is actually needed.
 - Broker persistence (WAL/journal) for crash-safe in-flight tasks.
@@ -328,3 +336,15 @@ implementing *this* repo does not touch hosting.
 - hosting #88 (cost-aware routing/proxy — orthogonal, not needed here)
 - `PRD.md` (the original Containerized AI Agent Multiplexer PDR — design record)
 - `PLAN-ccd-v1.md` (superseded — file-inbox + per-turn polling, dropped)
+- `design/runner-over-native-bg` branch (**superseded design track, retained not
+  merged**) — the earlier, unrelated-history line this repo restarted from on
+  2026-08-29: a Runner (a program with no model) executing a Plan over `claude
+  --bg` workers, with per-phase git worktrees and a Reviewer verdict grammar.
+  `PRD.md` here is that branch's PRD pruned from 310 lines to 92 (the inline
+  *(Removed: …)* notes mark the cuts), so the branch is the only place the full
+  rationale, the ADRs, and two evidence spikes survive —
+  `docs/spike-native-bg.md` (what `claude --bg` / `agents --json` / hooks
+  actually provide, binary 2.1.232) and `docs/spike-auto-continue.md` (why a
+  `--bg` worker never arms native auto-continue, binary 2.1.237). Both spikes
+  predate the current binary by ~30 releases; re-run before relying on either.
+  Not mergeable: no merge base, and the two designs contradict.
