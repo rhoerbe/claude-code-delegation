@@ -162,8 +162,8 @@ fi
 
 # ---------------------------------------------------------------------------
 # Step 7: token-spend verification (PLAN §5.4/§7) is explicitly MANUAL and
-# out of scope here — it needs a real Claude worker session and the hosting
-# repo's cc_token_usage.py, and is blocked on a hosting-repo deploy. Not
+# out of scope here — it needs a real Claude worker session and the deployment
+# repo's token-usage accounting script, and is blocked on a deploy. Not
 # scripted; see PLAN-ccd-v2.md §7 for the manual procedure.
 # ---------------------------------------------------------------------------
 echo

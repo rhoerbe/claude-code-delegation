@@ -6,10 +6,10 @@ per idle cycle; a blocking `recv` is strictly better and is now verified safe).
 
 This repo (`claude-code-delegation`) holds the **generic, public delegation
 model** — no host-specific paths, credentials, handles, or launcher names.
-Deployment onto specific hosts (riva/ray) via ansible roles, and the wiring of
-personal launchers/handles, lives in the **hosting** repo (a separate issue
-referenced in §9). Anyone should be able to use this repo without exposure to
-the author's settings.
+Deployment onto specific hosts via ansible roles, and the wiring of personal
+launchers/handles, lives in a separate **private deployment repo** (§9).
+Anyone should be able to use this repo without exposure to the author's
+settings.
 
 ## 0. What this is, in one paragraph
 
@@ -28,21 +28,21 @@ OpenRouter worker — the failure that motivated this).
 Claude Code's native cross-session messaging (`/list-agents`, `SendMessage`,
 FleetView) could not be made to bridge a subscription/OAuth dispatcher to a
 3rd-party-backend worker (OpenRouter, local ollama). The exact gating was never
-fully determined (three theories, all inconclusive — see the hosting #112
-discussion). Rather than fight native FleetView, ccd provides its own
+fully determined (three theories, all inconclusive; the investigation is
+recorded in the deployment repo). Rather than fight native FleetView, ccd provides its own
 auth-agnostic transport. The dispatcher and workers stay **interactive TUI
 sessions** (human can attach/confirm/take over) — that requirement is native
 FleetView's strength, and ccd preserves it by not touching the TUI at all:
 sessions communicate only through `ccd` tool calls.
 
-The user's working reference (ray): 6 interactive side-by-side `claude` sessions
+The author's working reference: 6 interactive side-by-side `claude` sessions
 on one backend, native SendMessage, dispatcher delegates. ccd reproduces that
 shape **across backends** by replacing the bus with the broker.
 
 ## 2. The verified primitives (why option 2 is safe)
 
-Tested 2026-08-27 on a worker backend (full log in hosting #112 session
-transcript). All three passed:
+Tested 2026-08-27 on a worker backend (full log in the deployment repo's
+session transcript). All three passed:
 
 1. **Blocking-tool-call survival (Fork 1):** a `claude --bg` subagent running a
    long-blocking Bash tool call (`sleep 180`, `timeout=200000`) is **not killed**
@@ -59,8 +59,8 @@ transcript). All three passed:
 
 **Token-spend claim (reasoned, not yet measured):** while a session is parked
 inside a pending tool call, no assistant message is generated, so no tokens are
-billed for the wait (`cc_token_usage.py` counts only `message.usage` on
-assistant turns). v1 smoke test step §7 verifies this directly rather than
+billed for the wait (the deployment repo's token-usage accounting counts only
+`message.usage` on assistant turns). v1 smoke test step §7 verifies this directly rather than
 asserting it.
 
 ## 3. Pinned decisions (v1)
@@ -76,8 +76,7 @@ asserting it.
   with `ccd recv <own-handle>`. A "dispatcher" is just a worker whose incoming
   tasks are delegation requests and whose skill tells it to farm subtasks out.
 - **Auth-agnostic.** The broker never reads Claude env vars. Backend selection
-  is entirely by which launcher starts the session (a hosting-deployment
-  concern, §9).
+  is entirely by which launcher starts the session (a deployment concern, §9).
 - **Transport seam, not a plugin system.** One abstraction boundary
   (`Transport` interface: `serve` / `recv_request`), one concrete impl
   (`UnixSocketTransport`). v1 ships UDS only. TCP/Matrix/MQTT *could* be added
@@ -180,13 +179,13 @@ process just waits on the socket read — this is the zero-token park).
 | `ccd ping` | `ping` |
 | `ccd broker start|stop|status` | manage the daemon process (start = nohup `ccd-broker` if not running; status = ping) |
 
-`CCD_HANDLE` env (set per-session by the hosting launcher/role, §9) is the
+`CCD_HANDLE` env (set per-session by the deploying launcher/role, §9) is the
 default `<handle>` for `recv`/`announce`/`retire` so the skill doesn't hardcode it.
 
 ### 5.3 Worker skill — `skills/ccd-worker.md` (generic; parametrized by env)
 
 Distributed as a Claude Code skill (or an `--append-system-prompt` string the
-hosting role injects). Teaches, in generic terms:
+deploying role injects). Teaches, in generic terms:
 
 > You are a worker identified by `$CCD_HANDLE` (set by your launcher). On start,
 > announce yourself: `ccd announce "$CCD_HANDLE" "$CCD_MODEL" "$CCD_EFFORT"`.
@@ -207,7 +206,7 @@ hosting role injects). Teaches, in generic terms:
 The dispatcher runs the **same skill** (symmetric) — it just has different
 *content* for what to do with an incoming task (farm out, collect) and what to do
 on done (read result, continue). The skill text can carry both modes, or the
-hosting role injects a dispatcher-mode variant.
+deploying role injects a dispatcher-mode variant.
 
 ### 5.4 Smoke test — `tests/ccd_smoke.sh`
 
@@ -241,10 +240,10 @@ PLAN-ccd-v2.md       # this file
 PRD.md               # the original PDR (kept as design record)
 ```
 
-No host-specific paths, no `openrouter`, no `riva`/`ray`, no personal handles.
-`$CCD_SOCKET`, `$CCD_HANDLE`, `$CCD_MODEL`, `$CCD_EFFORT` are the only
-configuration surface — all set by the deploying environment (hosting ansible
-role, §9).
+No host-specific paths, no hostnames, no backend/provider names, no personal
+handles. `$CCD_SOCKET`, `$CCD_HANDLE`, `$CCD_MODEL`, `$CCD_EFFORT` are the only
+configuration surface — all set by the deploying environment (the deployment
+repo's ansible role, §9).
 
 ## 7. Token-spend verification (the load-bearing claim)
 
@@ -253,15 +252,15 @@ Step 7 of the smoke test, run manually with a real worker session:
 1. Start a worker on any backend, `ccd announce`, then let it `ccd recv`
    (blocking). Leave it parked for ~60s.
 2. `ccd send` it a trivial task ("reply pong"); it wakes, replies.
-3. Run the hosting `scripts/cc_token_usage.py --since today` on that session's
-   transcript.
+3. Run the deployment repo's token-usage accounting script (`--since today`)
+   on that session's transcript.
 4. **Pass:** the token spend equals the announce turn + the wake/reply turn
    only — **zero** attributable to the ~60s parked wait (no assistant
    `message.usage` entry during the block). **Fail:** spend > the two turns
    (would mean the parked session was polling/generating — the design is broken;
    fall back to option 1's helper subagent).
 
-`cc_token_usage.py` lives in the hosting repo (not this one); the test is
+That script lives in the deployment repo (not this one); the test is
 documented here, executed against whichever host deploys ccd.
 
 ## 8. Esc-interrupt + manual steering (usage note, documented not coded)
@@ -282,12 +281,12 @@ A parked worker (`ccd recv` blocking) is interruptible:
 This is documented in the skill (§5.3) and the README usage section. It is the
 mitigation for option 2's one trade-off (session parked, not free, while idle).
 
-## 9. Deployment (out of scope for this repo — hosting issue)
+## 9. Deployment (out of scope for this repo)
 
-This repo is generic. Deployment onto riva/ray is a **hosting** issue (private
-repo), and consists of:
+This repo is generic. Deployment onto the author's hosts is tracked in a
+separate **private deployment repo**, and consists of:
 
-1. A new ansible role (sibling of `claude_glm`) that:
+1. A new ansible role (sibling of the existing per-backend launcher role) that:
    - Installs `ccd-broker` + `ccd` CLI from this repo (pip-install `ccd_broker`
      as a user package, or vendor the files into `~/.local/`).
    - Runs `ccd-broker` as a **systemd `--user` unit** (persistent, restarts on
@@ -295,17 +294,17 @@ repo), and consists of:
      needed for the broker (tmux stays only for human-attachable worker
      sessions, if the launcher convention uses it).
    - Injects `$CCD_HANDLE`/`$CCD_MODEL`/`$CCD_EFFORT` into each worker launcher
-     (e.g. `claude-more-models` becomes a `<launcher>` arg + the ccd env).
+     (e.g. an OpenRouter launcher becomes a `<launcher>` arg + the ccd env).
    - Installs the `ccd-worker` skill into `~/.claude/skills/` (or wires it as
      `--append-system-prompt`).
-2. **README correction** in `hosting/scripts/cc-models/README.md`: the
+2. **README correction** in the deployment repo's launcher documentation: the
    "feature-flag check" framing of `/list-agents` is now moot (ccd bypasses
    native messaging entirely). Rewrite that section to state ccd is the
    cross-backend transport and native FleetView is not used.
-3. The esc-interrupt usage note (§8) mirrored into the hosting usage doc.
+3. The esc-interrupt usage note (§8) mirrored into that repo's usage doc.
 
-The hosting issue references this plan and this repo. The AKF session
-implementing *this* repo does not touch hosting.
+The deployment issue references this plan and this repo. The session
+implementing *this* repo does not touch deployment.
 
 ## 10. Follow-ups (not v1)
 
@@ -326,14 +325,15 @@ implementing *this* repo does not touch hosting.
   change. Do not build the plugin system until a second impl is actually needed.
 - Broker persistence (WAL/journal) for crash-safe in-flight tasks.
 - Multi-user / hostile-task isolation (Podman + MAC, PRD §5).
-- `cc_token_usage.py` slug-based backend detection (hosting follow-up) so
-  3rd-party turns under unified `~/.claude` aren't mislabeled `oauth`.
+- Slug-based backend detection in the deployment repo's token-usage accounting
+  (a deployment follow-up) so 3rd-party turns under a unified `~/.claude`
+  aren't mislabeled `oauth`.
 
 ## Refs
-- hosting #112 (alternative LLM config + switch — the launcher that ccd deploys)
-- hosting #113 (`claude-more-models` launcher, a `<launcher>` arg to ccd dispatch)
-- hosting #49 / #86 (`claude-glm` wrapper + its ansible-ization — the deployment precedent)
-- hosting #88 (cost-aware routing/proxy — orthogonal, not needed here)
+- The private deployment repo: the alternative-LLM launcher work (the launcher
+  ccd deploys, and a `<launcher>` arg to ccd dispatch), the earlier OpenRouter
+  wrapper and its ansible-ization (the deployment precedent), and cost-aware
+  routing/proxy (orthogonal, not needed here).
 - `PRD.md` (the original Containerized AI Agent Multiplexer PDR — design record)
 - `PLAN-ccd-v1.md` (superseded — file-inbox + per-turn polling, dropped)
 - `design/runner-over-native-bg` branch (**superseded design track, retained not
