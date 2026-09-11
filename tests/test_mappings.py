@@ -199,6 +199,63 @@ def test_a_null_effort_renders_as_an_entry_with_no_effort():
 
 
 # ----------------------------------------------------------------------
+# billing is optional, and stored rather than derived (hosting#131 phase 4
+# follow-up: ADR-0002's handle shape needs it back, but as a fact about the
+# route, not a slot). Same null-absent/empty-refused shape as effort above,
+# by the same rule and for the same reason.
+# ----------------------------------------------------------------------
+
+def test_an_entry_with_no_billing_is_valid():
+    assert m.validate(doc(entry(billing=None))) == []
+
+
+@pytest.mark.parametrize("billing", m.BILLING)
+def test_every_valid_billing_is_accepted(billing):
+    assert m.validate(doc(entry(billing=billing))) == []
+
+
+def test_billing_uppercase_refused_case_matters():
+    # Lowercase throughout, matching hosting's own ccd-launch.j2 literals
+    # (`billing="sub"`/`billing="api"`) rather than ADR-0002's prose casing
+    # (`Sub`/`API`) — refused rather than silently normalised, the same
+    # choice already made for effort ('Max' is refused, not folded to 'max').
+    assert only(m.validate(doc(entry(billing="Sub"))), "'billing'")
+    assert only(m.validate(doc(entry(billing="API"))), "'billing'")
+
+
+def test_billing_bogus_value_refused():
+    assert only(m.validate(doc(entry(billing="prepaid"))), "'billing'")
+
+
+def test_an_empty_billing_is_refused_rather_than_treated_as_absent():
+    assert only(m.validate(doc(entry(billing=""))), "omitted entirely")
+
+
+def test_a_null_billing_means_absent_like_an_omitted_key():
+    assert m.validate(doc({"launcher": "claude", "model": "x",
+                           "billing": None})) == []
+
+
+def test_billing_does_not_participate_in_id_derivation():
+    # The id identifies a model and an effort. Two entries agreeing on
+    # launcher, model and effort but differing only in billing are still a
+    # true duplicate — a manifest bug, not two things for billing to tell
+    # apart — the same as two entries agreeing on everything material
+    # already are.
+    same_billing_missing = doc(entry(), entry(billing="sub"))
+    assert any("both derive the id" in p for p in m.validate(same_billing_missing))
+
+    different_billing = doc(entry(billing="sub"), entry(billing="api"))
+    assert any("both derive the id" in p for p in m.validate(different_billing))
+    assert m.entry_id(entry(billing="sub")) == m.entry_id(entry(billing="api"))
+
+
+def test_billing_does_not_participate_in_label_derivation():
+    assert m.display(entry(billing="sub")) == m.display(entry(billing="api")) \
+        == m.display(entry())
+
+
+# ----------------------------------------------------------------------
 # the id is derived from model and effort
 # ----------------------------------------------------------------------
 
