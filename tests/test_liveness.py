@@ -212,8 +212,11 @@ def run(tmp: Path) -> int:
         out = ccd_run("ls")
         check("ccd ls exits 0", out.returncode == 0, repr(out.stderr))
         lines = out.stdout.strip().splitlines()
-        check("a header row is printed", lines and lines[0].startswith("HANDLE"),
-              repr(lines[:1]))
+        # No header row, deliberately: hosting's ccd_overview.py treats every
+        # non-blank line as one worker's data (claude-code-delegation#13) —
+        # a header would misparse as a fake handle literally named "HANDLE".
+        check("no header row — every line is real worker data",
+              all(not l.startswith("HANDLE\t") for l in lines), repr(lines[:1]))
         row = next((l for l in lines if l.startswith("drifted\t")), "")
         cols = row.split("\t")
         check("the row has slot/effort/owner/model/pid/status/drift columns",

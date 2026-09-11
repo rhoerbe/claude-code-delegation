@@ -291,7 +291,12 @@ cmd_release() {
 # Columns 1-4 (handle/slot/effort/owner) keep their pre-1.3 positions on
 # purpose — anything parsing this output by column index (hosting's
 # ccd_overview.py, claude-code-delegation#13) stays working unmodified.
-# model/pid/status/drift are appended, not inserted, for the same reason.
+# model/pid/status/drift are appended, not inserted, for the same reason —
+# and deliberately with NO header row: a column-index consumer here treats
+# every non-blank, non-"(no workers announced)" line as one worker's data
+# (that is the whole reason 3-vs-4-column pre-1.1.0/1.1.0 rosters were both
+# just "accepted" rather than version-sniffed), so a header would misparse
+# as a fake worker literally named "HANDLE".
 #
 # pid/status come straight from the roster reply (the broker already
 # resolved liveness — see broker.py's module docstring, "Liveness and
@@ -324,7 +329,6 @@ if not workers:
     print("(no workers announced)")
     sys.exit(0)
 
-print("HANDLE\tSLOT\tEFFORT\tOWNER\tMODEL\tPID\tSTATUS\tDRIFT")
 for w in workers:
     handle = str(w.get("handle"))
     slot = w.get("slot") or "-"
