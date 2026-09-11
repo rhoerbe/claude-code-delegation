@@ -26,26 +26,31 @@ EXAMPLE = {
             "launcher": "claude",
             "model": "claude-sonnet-5",
             "effort": "medium",
+            "billing": "sub",
         },
         {
             "launcher": "claude",
             "model": "claude-opus-5",
             "effort": "high",
+            "billing": "sub",
         },
         {
             "launcher": "claude",
             "model": "claude-haiku-4-5",
+            "billing": "sub",
             "notes": "no effort: this model never receives one, so claiming a value would be fiction",
         },
         {
             "launcher": "claude-openrouter",
             "model": "moonshotai/kimi-k3[1m]",
             "effort": "max",
+            "billing": "api",
             "notes": "effort set by hand from benchmark reading; [1m] lifts the assumed 200k window",
         },
         {
             "launcher": "claude-openrouter",
             "model": "deepseek/deepseek-v4.1-flash",
+            "billing": "api",
         },
     ],
 }
