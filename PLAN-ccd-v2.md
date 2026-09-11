@@ -293,7 +293,7 @@ separate **private deployment repo**, and consists of:
 
 1. A new ansible role (sibling of the existing per-backend launcher role) that:
    - Installs `ccd-broker` + `ccd` CLI from this repo (pip-install `ccd_broker`
-     as a user package, or vendor the files into `~/.local/`).
+     as a user package, or install a copy of the files into `~/.local/`).
    - Runs `ccd-broker` as a **systemd `--user` unit** (persistent, restarts on
      crash). This is the natural home for the long-lived broker; tmux is not
      needed for the broker (tmux stays only for human-attachable worker
