@@ -190,8 +190,19 @@ cmd_announce() {
   # the transcript `ccd dashboard` reads its status/cost/content from
   # (ADR-0008). $CLAUDE_CODE_SESSION_ID is set inside a Claude Code session and
   # empty anywhere else, in which case the broker keeps whatever it already had.
-  local rpc_args=(announce "handle=$handle" "model=$model" "effort=$effort"
-                  "cwd=$PWD" "session=${CLAUDE_CODE_SESSION_ID:-}")
+  #
+  # $model here is the CLI's positional slot argument (fable/opus/sonnet/
+  # haiku) — sent on the wire as `slot`, broker 1.3's honest name for it
+  # (claude-code-delegation#13). The resolved `model` field and `mapping` are
+  # left unsent: nothing at this layer can supply them yet (that is phase
+  # 2/4's manifest and launcher work), and the broker treats an omitted
+  # optional field as "unknown", never as a lie. $CLAUDE_PID is the
+  # announcing session's own top-level process id, set inside Claude Code and
+  # empty anywhere else — the broker treats an empty pid as "no pid", exactly
+  # like a plain shell participant, so it is never reaped for staleness.
+  local rpc_args=(announce "handle=$handle" "slot=$model" "effort=$effort"
+                  "cwd=$PWD" "session=${CLAUDE_CODE_SESSION_ID:-}"
+                  "pid=${CLAUDE_PID:-}")
   [ -n "$exclusive" ] && rpc_args+=("exclusive=1")
 
   local reply
@@ -275,25 +286,75 @@ cmd_release() {
   _ccd_ok_or_err "$reply" "released $worker"
 }
 
+# ccd ls: the roster, plus what the broker cannot know on its own.
+#
+# Columns 1-4 (handle/slot/effort/owner) keep their pre-1.3 positions on
+# purpose — anything parsing this output by column index (hosting's
+# ccd_overview.py, claude-code-delegation#13) stays working unmodified.
+# model/pid/status/drift are appended, not inserted, for the same reason.
+#
+# pid/status come straight from the roster reply (the broker already
+# resolved liveness — see broker.py's module docstring, "Liveness and
+# reaping"). drift is NOT the broker's to know (ADR-0003: it holds no
+# transcript access) — this is computed here, the same way `ccd dashboard`
+# does, by reading the announced session's own transcript
+# (ccd_dashboard.transcript, ADR-0008) and comparing what it shows against
+# what was declared. The roster itself is never touched by what is found.
 cmd_ls() {
   local reply
   reply="$(_ccd_rpc roster)" || {
     echo "ccd ls: broker unreachable at $CCD_SOCKET" >&2
     return 1
   }
-  _ccd_fmt "$reply" "
-if not d.get('ok'):
-    print('ccd ls: ' + str(d.get('reason', 'error')), file=sys.stderr)
+  local root
+  root="$(_ccd_repo_root)"
+  PYTHONPATH="$root${PYTHONPATH:+:$PYTHONPATH}" python3 - "$reply" <<'PYEOF'
+import json
+import sys
+
+from ccd_dashboard import transcript as tx
+
+d = json.loads(sys.argv[1])
+if not d.get("ok"):
+    print("ccd ls: " + str(d.get("reason", "error")), file=sys.stderr)
     sys.exit(1)
-workers = d.get('workers') or []
+
+workers = d.get("workers") or []
 if not workers:
-    print('(no workers announced)')
-else:
-    for w in workers:
-        owner = w.get('owner') or '-'
-        print(str(w.get('handle')) + '\t' + str(w.get('model')) + '\t'
-              + str(w.get('effort')) + '\t' + str(owner))
-"
+    print("(no workers announced)")
+    sys.exit(0)
+
+print("HANDLE\tSLOT\tEFFORT\tOWNER\tMODEL\tPID\tSTATUS\tDRIFT")
+for w in workers:
+    handle = str(w.get("handle"))
+    slot = w.get("slot") or "-"
+    effort = w.get("effort") or "-"
+    owner = w.get("owner") or "-"
+    model = w.get("model") or "-"
+    pid = w.get("pid")
+    alive = w.get("alive")
+    if pid is None:
+        pid_col, status = "-", "-"
+    else:
+        pid_col, status = str(pid), ("up" if alive else "dead")
+
+    # Observed values come from the session's own transcript, never from the
+    # broker (ADR-0003/0008) — located the same way `ccd dashboard` does.
+    # `!` never fires on a field that was never declared: an undeclared
+    # `model` (nothing upstream can supply it yet) is not a discrepancy,
+    # it's simply unknown.
+    drift = ""
+    located = tx.locate(w.get("cwd"), w.get("session"))
+    if located:
+        facts = tx.parse(located.path)
+        declared_effort, declared_model = w.get("effort") or None, w.get("model") or None
+        if facts.effort and declared_effort and facts.effort != declared_effort:
+            drift = "!"
+        elif facts.model and declared_model and facts.model != declared_model:
+            drift = "!"
+
+    print("\t".join([handle, slot, effort, owner, model, pid_col, status, drift]))
+PYEOF
 }
 
 # ccd dashboard [--scope <handle>] [--json] [--write <path>] [--rates <file>]
