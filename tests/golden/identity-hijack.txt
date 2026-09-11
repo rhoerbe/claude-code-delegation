@@ -1,0 +1,6 @@
+argv: ccd announce w-id a-model high
+exit: 1
+--- stdout ---
+
+--- stderr ---
+error: handle 'w-id' is held by live pid <PID>; retire it first, or pass force

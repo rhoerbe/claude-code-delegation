@@ -1,0 +1,5 @@
+argv: ccd announce w-id2 a-model high --force
+exit: 0
+--- stdout ---
+announced w-id2 (a-model/high)
+--- stderr ---

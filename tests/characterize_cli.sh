@@ -199,6 +199,35 @@ record_case ret-ok -- ret w1
 record_case ret-nopid -- ret w-nopid
 record_case ret-unknown -- ret nobody
 record_case ls-after-retire -- ls
+
+# Handle identity, broker 1.4.0. Placed after the roster is empty so these
+# leave the earlier goldens alone, and on their own handles for the same
+# reason.
+#
+# These exist because of a trap this harness set for itself. It exports
+# CLAUDE_PID="$$" so a recording session's own pid cannot leak into a golden —
+# which means every announce above shares one pid, so the broker reads them all
+# as the same process re-announcing (rule a) and the metadata comparison is
+# never reached. A fixture that makes the subject deterministic made it
+# unrepresentative. The cases below vary the pid on purpose.
+echo "=== handle identity (broker 1.4.0) ==="
+record_case identity-announce -- announce w-id a-model low
+# Same pid, different effort: allowed. The Esc-interrupted worker reclaiming
+# its own handle.
+record_case identity-same-pid-new-effort -- announce w-id a-model high
+# A different LIVE pid on a live handle: refused as a hijack, even though the
+# effort now matches what is recorded.
+record_case identity-hijack CLAUDE_PID=1 -- announce w-id a-model high
+record_case identity-hijack-force CLAUDE_PID=1 -- announce w-id a-model high --force
+# Neither side has a pid: falls back to the declared metadata, exactly as
+# before 1.4.0. This is the path the harness could no longer reach on its own.
+record_case identity-nopid-announce CLAUDE_PID= -- announce w-id2 a-model low
+record_case identity-nopid-same-effort CLAUDE_PID= -- announce w-id2 a-model low
+record_case identity-nopid-new-effort CLAUDE_PID= -- announce w-id2 a-model high
+record_case identity-nopid-force CLAUDE_PID= -- announce w-id2 a-model high --force
+record_case identity-ret -- ret w-id
+record_case identity-ret2 -- ret w-id2
+
 record_case broker-stop -- broker stop
 record_case broker-stop-again -- broker stop
 

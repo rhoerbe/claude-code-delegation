@@ -1,6 +1,5 @@
 argv: ccd announce w1 a-model high
-exit: 1
+exit: 0
 --- stdout ---
-
+announced w1 (a-model/high)
 --- stderr ---
-error: handle 'w1' is already announced at effort low; retire it first, or pass force

@@ -1,0 +1,5 @@
+argv: ccd ret w-id
+exit: 0
+--- stdout ---
+retired w-id
+--- stderr ---

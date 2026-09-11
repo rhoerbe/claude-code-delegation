@@ -1,0 +1,6 @@
+argv: ccd announce w-id2 a-model high
+exit: 1
+--- stdout ---
+
+--- stderr ---
+error: handle 'w-id2' is already announced at effort low; retire it first, or pass force

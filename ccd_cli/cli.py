@@ -33,7 +33,7 @@ USAGE = """usage: ccd <subcommand> [args]
 
   ccd send <to> <msg> [-f from]
   ccd recv [<handle>] [-t timeout]      ($CCD_HANDLE is the default handle)
-  ccd announce [<handle>] <model> <effort> [--exclusive]
+  ccd announce [<handle>] <model> <effort> [--exclusive] [--force]
   ccd ret [<handle>]
   ccd claim <worker> [<dispatcher>] [--force]
   ccd release <worker> [--force]
@@ -157,10 +157,20 @@ def cmd_recv(argv: list) -> int:
 
 def cmd_announce(argv: list) -> int:
     exclusive = False
+    force = False
     positional = []
     for arg in argv:
         if arg == "--exclusive":
             exclusive = True
+        # `--force` is what three of the broker's own refusals tell the
+        # operator to reach for ("retire it first, or pass force"), so the CLI
+        # has to be able to send it — without this the advice named something
+        # the CLI rejected as a usage error. Same shape as cmd_claim and
+        # cmd_release, which have always taken it. No `-f` alias here: `ccd
+        # send` already spends `-f` on the sender handle, and one letter
+        # meaning two things across subcommands is worse than typing the word.
+        elif arg == "--force":
+            force = True
         else:
             positional.append(arg)
 
@@ -170,8 +180,8 @@ def cmd_announce(argv: list) -> int:
         handle = _env_handle()
         model, effort = positional
     else:
-        _err("usage: ccd announce [<handle>] <model> <effort>  "
-             "($CCD_HANDLE is the default handle)")
+        _err("usage: ccd announce [<handle>] <model> <effort> "
+             "[--exclusive] [--force]  ($CCD_HANDLE is the default handle)")
         return 2
 
     if not handle:
@@ -208,6 +218,8 @@ def cmd_announce(argv: list) -> int:
     }
     if exclusive:
         args["exclusive"] = "1"
+    if force:
+        args["force"] = "1"
 
     try:
         reply = rpc("announce", **args)

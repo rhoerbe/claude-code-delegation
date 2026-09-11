@@ -3,4 +3,4 @@ exit: 1
 --- stdout ---
 
 --- stderr ---
-error: handle 'w1' is already announced (effort low)
+error: handle 'w1' is already announced (effort high)
