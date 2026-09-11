@@ -252,13 +252,15 @@ def render_markdown(model: dict, now: Optional[float] = None) -> str:
                      "| last activity | cost | tree |")
         lines.append("|---|---|---|---|---|---|---|---|")
         for session in sessions:
-            tier = "/".join(x for x in (session["model"], session["effort"]) if x)
+            model_effort = "/".join(
+                x for x in (session["model"], session["effort"]) if x
+            )
             lines.append(
-                "| `{handle}` | {role} | {tier} | {owner} | {status} "
+                "| `{handle}` | {role} | {model_effort} | {owner} | {status} "
                 "| {ago} | {cost} | {tree} |".format(
                     handle=session["handle"],
                     role=session["role"],
-                    tier=tier or "—",
+                    model_effort=model_effort or "—",
                     owner=f"`{session['owner']}`" if session["owner"] else "—",
                     status=session["status"],
                     ago=_ago(session["last_activity"], now),
