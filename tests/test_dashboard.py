@@ -1,43 +1,22 @@
-#!/usr/bin/env python3
 """Fleet dashboard: metadata system-wide, content scoped (ADR-0008, issue #11).
 
 Everything here runs against synthetic transcripts under a temporary root, so
 the suite never reads the machine's real sessions and never needs a broker
 socket. The broker section drives `Broker` directly, as `test_affiliation.py`
 does — the announce fields are broker logic and need no transport.
-
-Run: tests/test_dashboard.py
 """
 from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import pytest
 
-from ccd_broker.broker import Broker  # noqa: E402
-from ccd_dashboard import dashboard, transcript  # noqa: E402
-
-FAILURES: list[str] = []
-
-
-def check(name: str, cond: bool, detail: str = "") -> None:
-    if cond:
-        print(f"  ok    {name}")
-    else:
-        print(f"  FAIL  {name}{(' — ' + detail) if detail else ''}")
-        FAILURES.append(name)
-
-
-def call(b: Broker, method: str, **args) -> dict:
-    return b.dispatch({"method": method, "args": args}) or {}
-
+from ccd_dashboard import dashboard, transcript
 
 # ----------------------------------------------------------------------
 # synthetic transcripts
@@ -137,206 +116,259 @@ def by_handle(model: dict, handle: str) -> dict:
 
 
 # ----------------------------------------------------------------------
+# announce carries cwd and session
+# ----------------------------------------------------------------------
 
-
-def main() -> int:
-    root = Path(tempfile.mkdtemp(prefix="ccd-dash-"))
-    try:
-        return run(root)
-    finally:
-        shutil.rmtree(root, ignore_errors=True)
-
-
-def run(tmp: Path) -> int:
-    root = tmp / "transcripts"
-    root.mkdir()
-
-    print("announce carries cwd and session (the only handle->transcript link):")
-    b = Broker()
-    call(b, "announce", handle="w1", effort="medium",
+def test_roster_reports_cwd_and_session(call, broker):
+    call(broker, "announce", handle="w1", effort="medium",
          cwd="/work/beta", session="s-w1")
-    entry = (call(b, "roster").get("workers") or [{}])[0]
-    check("roster reports cwd", entry.get("cwd") == "/work/beta", repr(entry))
-    check("roster reports session", entry.get("session") == "s-w1", repr(entry))
-    call(b, "claim", handle="w1", owner="disp")
-    # A re-announce from a plain shell has no $CLAUDE_CODE_SESSION_ID and sends
-    # an empty string; that must not blank what the session already reported.
-    call(b, "announce", handle="w1", effort="medium",
-         cwd="", session="")
-    entry = (call(b, "roster").get("workers") or [{}])[0]
-    check("an empty re-announce preserves cwd/session",
-          entry.get("cwd") == "/work/beta" and entry.get("session") == "s-w1",
-          repr(entry))
-    check("and still preserves the claim", entry.get("owner") == "disp")
-    call(b, "announce", handle="w1", effort="medium",
+    entry = (call(broker, "roster").get("workers") or [{}])[0]
+    assert entry.get("cwd") == "/work/beta", repr(entry)
+    assert entry.get("session") == "s-w1", repr(entry)
+
+
+def test_empty_reannounce_preserves_cwd_session_and_claim(call, broker):
+    call(broker, "announce", handle="w1", effort="medium",
+         cwd="/work/beta", session="s-w1")
+    call(broker, "claim", handle="w1", owner="disp")
+    # A re-announce from a plain shell has no $CLAUDE_CODE_SESSION_ID and
+    # sends an empty string; that must not blank what the session already
+    # reported.
+    call(broker, "announce", handle="w1", effort="medium", cwd="", session="")
+    entry = (call(broker, "roster").get("workers") or [{}])[0]
+    assert entry.get("cwd") == "/work/beta", repr(entry)
+    assert entry.get("session") == "s-w1", repr(entry)
+    assert entry.get("owner") == "disp"
+
+
+def test_reannounce_that_supplies_them_updates_both(call, broker):
+    call(broker, "announce", handle="w1", effort="medium",
+         cwd="/work/beta", session="s-w1")
+    call(broker, "announce", handle="w1", effort="medium",
          cwd="/work/moved", session="s-new")
-    entry = (call(b, "roster").get("workers") or [{}])[0]
-    check("a re-announce that supplies them updates both",
-          entry.get("cwd") == "/work/moved" and entry.get("session") == "s-new",
-          repr(entry))
-    call(b, "announce", handle="w9", effort="medium")
-    entry = next(e for e in call(b, "roster")["workers"] if e["handle"] == "w9")
-    check("a participant that announces neither is simply unlocated",
-          entry.get("cwd") is None and entry.get("session") is None, repr(entry))
+    entry = (call(broker, "roster").get("workers") or [{}])[0]
+    assert entry.get("cwd") == "/work/moved", repr(entry)
+    assert entry.get("session") == "s-new", repr(entry)
 
-    print("\nlocating a transcript:")
-    write_transcript(root, "/work/beta", "s-w1", [user("hi")])
+
+def test_a_participant_announcing_neither_is_unlocated(call, broker):
+    call(broker, "announce", handle="w9", effort="medium")
+    entry = next(e for e in call(broker, "roster")["workers"] if e["handle"] == "w9")
+    assert entry.get("cwd") is None, repr(entry)
+    assert entry.get("session") is None, repr(entry)
+
+
+# ----------------------------------------------------------------------
+# locating a transcript
+# ----------------------------------------------------------------------
+
+def test_an_announced_session_id_names_the_file_exactly(tmp_path):
+    write_transcript(tmp_path, "/work/beta", "s-w1", [user("hi")])
     time.sleep(0.01)
-    write_transcript(root, "/work/beta", "s-other", [user("someone else")])
-    located = transcript.locate("/work/beta", "s-w1", root=root)
-    check("an announced session id names the file exactly",
-          located.resolved_by == "session-id"
-          and located.path.name == "s-w1.jsonl", repr(located))
-    located = transcript.locate("/work/beta", None, root=root)
-    check("without one it falls back to the newest in that tree, and says so",
-          located.resolved_by == "mtime" and located.path.name == "s-other.jsonl",
-          repr(located))
-    check("an announced session with no file resolves to nothing rather than "
-          "guessing another session",
-          not transcript.locate("/work/beta", "s-gone", root=root))
-    check("no cwd means no transcript",
-          not transcript.locate(None, "s-w1", root=root))
-    check("an unknown tree means no transcript",
-          not transcript.locate("/work/nowhere", None, root=root))
+    write_transcript(tmp_path, "/work/beta", "s-other", [user("someone else")])
+    located = transcript.locate("/work/beta", "s-w1", root=tmp_path)
+    assert located.resolved_by == "session-id", repr(located)
+    assert located.path.name == "s-w1.jsonl", repr(located)
 
-    print("\nreading one transcript:")
-    fleet(root)
-    facts = transcript.parse(root / transcript.encode_project_dir(W1_CWD) / "s-w1.jsonl")
-    check("a worker blocked in `ccd recv` reads as parked",
-          facts.status == "parked", facts.status)
-    check("its last task is the message that recv delivered",
-          facts.last_task == W1_TASK, repr(facts.last_task))
-    check("tokens are summed across turns",
-          facts.tokens["total"] == 1 + 2 + 3 + 4 + 5 + 6, repr(facts.tokens))
-    check("the branch comes off the transcript", facts.branch == "main")
-    facts = transcript.parse(root / transcript.encode_project_dir(DISP_CWD) / "s-disp.jsonl")
-    check("the first substantive message skips command machinery",
-          facts.first_message == DISP_GOAL, repr(facts.first_message))
-    check("and system-reminders are stripped out of it",
-          "not part of the goal" not in (facts.first_message or ""))
-    check("its issue tag is extracted", facts.issue == "#11", repr(facts.issue))
-    check("a finished turn reads as idle", facts.status == "idle", facts.status)
-    check("cache tokens are counted",
-          facts.tokens["cache_read"] == 1000, repr(facts.tokens))
-    check("a session that ran nothing is unknown, not idle",
-          transcript.parse(root / "nope.jsonl").status == "unknown")
 
-    print("\na `ccd recv` in a comment is not a parked worker:")
-    write_transcript(root, "/work/meta", "s-meta", [
+def test_without_a_session_id_it_falls_back_to_the_newest(tmp_path):
+    write_transcript(tmp_path, "/work/beta", "s-w1", [user("hi")])
+    time.sleep(0.01)
+    write_transcript(tmp_path, "/work/beta", "s-other", [user("someone else")])
+    located = transcript.locate("/work/beta", None, root=tmp_path)
+    assert located.resolved_by == "mtime", repr(located)
+    assert located.path.name == "s-other.jsonl", repr(located)
+
+
+def test_an_announced_session_with_no_file_resolves_to_nothing(tmp_path):
+    write_transcript(tmp_path, "/work/beta", "s-w1", [user("hi")])
+    assert not transcript.locate("/work/beta", "s-gone", root=tmp_path)
+
+
+def test_no_cwd_means_no_transcript(tmp_path):
+    write_transcript(tmp_path, "/work/beta", "s-w1", [user("hi")])
+    assert not transcript.locate(None, "s-w1", root=tmp_path)
+
+
+def test_an_unknown_tree_means_no_transcript(tmp_path):
+    write_transcript(tmp_path, "/work/beta", "s-w1", [user("hi")])
+    assert not transcript.locate("/work/nowhere", None, root=tmp_path)
+
+
+# ----------------------------------------------------------------------
+# reading one transcript
+# ----------------------------------------------------------------------
+
+def test_a_worker_blocked_in_ccd_recv_reads_as_parked(tmp_path):
+    fleet(tmp_path)
+    facts = transcript.parse(tmp_path / transcript.encode_project_dir(W1_CWD) / "s-w1.jsonl")
+    assert facts.status == "parked", facts.status
+    assert facts.last_task == W1_TASK, repr(facts.last_task)
+    assert facts.tokens["total"] == 1 + 2 + 3 + 4 + 5 + 6, repr(facts.tokens)
+    assert facts.branch == "main"
+
+
+def test_the_first_substantive_message_skips_command_machinery(tmp_path):
+    fleet(tmp_path)
+    facts = transcript.parse(tmp_path / transcript.encode_project_dir(DISP_CWD) / "s-disp.jsonl")
+    assert facts.first_message == DISP_GOAL, repr(facts.first_message)
+    assert "not part of the goal" not in (facts.first_message or "")
+    assert facts.issue == "#11", repr(facts.issue)
+    assert facts.status == "idle", facts.status
+    assert facts.tokens["cache_read"] == 1000, repr(facts.tokens)
+
+
+def test_a_session_that_ran_nothing_is_unknown_not_idle(tmp_path):
+    fleet(tmp_path)
+    assert transcript.parse(tmp_path / "nope.jsonl").status == "unknown"
+
+
+def test_a_ccd_recv_in_a_comment_is_not_a_parked_worker(tmp_path):
+    write_transcript(tmp_path, "/work/meta", "s-meta", [
         user("work on ccd itself"),
         assistant(tool_use("t1", "grep -n '`ccd recv`' skills/ccd-worker.md"),
                   usage=_usage(1, 1)),
     ])
-    facts = transcript.parse(root / transcript.encode_project_dir("/work/meta") / "s-meta.jsonl")
-    check("a mention inside another command reads as working, not parked",
-          facts.status == "working", facts.status)
+    facts = transcript.parse(tmp_path / transcript.encode_project_dir("/work/meta") / "s-meta.jsonl")
+    assert facts.status == "working", facts.status
 
-    print("\nmetadata is system-wide:")
-    roster = fleet(root)
-    model = dashboard.build(roster, None, root=root)
-    check("every announced handle is present",
-          [s["handle"] for s in model["sessions"]] == ["disp", "w1", "w2"],
-          repr([s["handle"] for s in model["sessions"]]))
+
+# ----------------------------------------------------------------------
+# metadata is system-wide
+# ----------------------------------------------------------------------
+
+def test_every_announced_handle_is_present(tmp_path):
+    roster = fleet(tmp_path)
+    model = dashboard.build(roster, None, root=tmp_path)
+    assert [s["handle"] for s in model["sessions"]] == ["disp", "w1", "w2"], \
+        repr([s["handle"] for s in model["sessions"]])
+
+
+def test_role_owner_model_effort_tree_status_cost_are_reported(tmp_path):
+    roster = fleet(tmp_path)
+    model = dashboard.build(roster, None, root=tmp_path)
     disp, w1 = by_handle(model, "disp"), by_handle(model, "w1")
-    check("the role comes off the claim graph, not a declaration",
-          disp["role"] == "dispatcher" and w1["role"] == "worker")
-    check("the owner is carried through", w1["owner"] == "disp")
-    check("model and effort are carried through",
-          (w1["model"], w1["effort"]) == ("sonnet", "medium"))
-    check("the working tree is reported", w1["tree"]["cwd"] == W1_CWD)
-    check("status is reported for every entry",
-          [s["status"] for s in model["sessions"]] == ["idle", "parked", "idle"],
-          repr([s["status"] for s in model["sessions"]]))
-    check("cost is reported for every entry",
-          all(s["cost"]["tokens"]["total"] > 0 for s in model["sessions"]))
-    check("cost is tokens-only without a rate table",
-          all(s["cost"]["usd"] is None for s in model["sessions"]))
-    check("the transcript that was read is named, with how it was found",
-          w1["transcript"]["resolved_by"] == "session-id"
-          and w1["transcript"]["path"].endswith("s-w1.jsonl"))
-    check("no entry carries content when nothing is scoped",
-          all(s["content"] is None for s in model["sessions"]))
+    assert disp["role"] == "dispatcher"
+    assert w1["role"] == "worker"  # role comes off the claim graph, not a declaration
+    assert w1["owner"] == "disp"
+    assert (w1["model"], w1["effort"]) == ("sonnet", "medium")
+    assert w1["tree"]["cwd"] == W1_CWD
+    assert [s["status"] for s in model["sessions"]] == ["idle", "parked", "idle"], \
+        repr([s["status"] for s in model["sessions"]])
+    assert all(s["cost"]["tokens"]["total"] > 0 for s in model["sessions"])
+    assert all(s["cost"]["usd"] is None for s in model["sessions"])  # no rate table
+    assert w1["transcript"]["resolved_by"] == "session-id"
+    assert w1["transcript"]["path"].endswith("s-w1.jsonl")
+    assert all(s["content"] is None for s in model["sessions"])  # nothing scoped
 
+
+def test_the_rendered_view_lists_every_handle_with_no_content(tmp_path):
+    roster = fleet(tmp_path)
+    model = dashboard.build(roster, None, root=tmp_path)
     rendered = dashboard.render_markdown(model)
-    check("the rendered view lists every handle",
-          all(f"`{h}`" in rendered for h in ("disp", "w1", "w2")))
-    check("and contains no session's content",
-          not any(text in rendered for text in (DISP_GOAL, W1_TASK, W2_GOAL)))
+    assert all(f"`{h}`" in rendered for h in ("disp", "w1", "w2"))
+    assert not any(text in rendered for text in (DISP_GOAL, W1_TASK, W2_GOAL))
 
-    print("\na handle with no transcript still appears:")
+
+def test_a_handle_with_no_transcript_still_appears(tmp_path):
     model = dashboard.build(
         [{"handle": "opaque", "model": "local", "effort": "-", "owner": None}],
-        None, root=root)
+        None, root=tmp_path)
     only = model["sessions"][0]
-    check("status is unknown rather than invented", only["status"] == "unknown")
-    check("cost is empty rather than zero-that-looks-real",
-          not only["cost"]["tokens"].get("total"), repr(only["cost"]))
-    check("it renders without blowing up",
-          "`opaque`" in dashboard.render_markdown(model))
+    assert only["status"] == "unknown"  # not invented
+    assert not only["cost"]["tokens"].get("total"), repr(only["cost"])
+    assert "`opaque`" in dashboard.render_markdown(model)  # renders without blowing up
 
-    print("\ncontent is scoped to one handle:")
-    model = dashboard.build(roster, "w1", root=root)
-    check("the scoped handle has content", by_handle(model, "w1")["content"])
-    check("its content is the last task it received",
-          by_handle(model, "w1")["content"]["text"] == W1_TASK)
-    check("labelled as such", by_handle(model, "w1")["content"]["kind"] == "last-task")
-    check("no other handle does",
-          all(s["content"] is None for s in model["sessions"]
-              if s["handle"] != "w1"))
+
+# ----------------------------------------------------------------------
+# content is scoped to one handle
+# ----------------------------------------------------------------------
+
+def test_the_scoped_worker_gets_its_last_task_as_content(tmp_path):
+    roster = fleet(tmp_path)
+    model = dashboard.build(roster, "w1", root=tmp_path)
+    assert by_handle(model, "w1")["content"]
+    assert by_handle(model, "w1")["content"]["text"] == W1_TASK
+    assert by_handle(model, "w1")["content"]["kind"] == "last-task"
+    assert all(s["content"] is None for s in model["sessions"] if s["handle"] != "w1")
+
+
+def test_the_rendered_scoped_view_shows_only_that_sessions_material(tmp_path):
+    roster = fleet(tmp_path)
+    model = dashboard.build(roster, "w1", root=tmp_path)
     rendered = dashboard.render_markdown(model)
-    check("the rendered view shows the scoped session's line", W1_TASK in rendered)
-    check("and no other client's material — the load-bearing constraint",
-          DISP_GOAL not in rendered and W2_GOAL not in rendered)
-    check("every handle is still listed", "`w2`" in rendered)
+    assert W1_TASK in rendered
+    # The load-bearing constraint: no other client's material leaks in.
+    assert DISP_GOAL not in rendered and W2_GOAL not in rendered
+    assert "`w2`" in rendered  # every handle is still listed
 
-    model = dashboard.build(roster, "disp", root=root)
-    check("a dispatcher's content is the goal it was given",
-          by_handle(model, "disp")["content"]["text"] == DISP_GOAL)
-    check("labelled as such",
-          by_handle(model, "disp")["content"]["kind"] == "goal")
-    check("with its issue tag",
-          by_handle(model, "disp")["content"]["issue"] == "#11")
+
+def test_a_dispatchers_content_is_the_goal_it_was_given(tmp_path):
+    roster = fleet(tmp_path)
+    model = dashboard.build(roster, "disp", root=tmp_path)
+    assert by_handle(model, "disp")["content"]["text"] == DISP_GOAL
+    assert by_handle(model, "disp")["content"]["kind"] == "goal"
+    assert by_handle(model, "disp")["content"]["issue"] == "#11"
     rendered = dashboard.render_markdown(model)
-    check("and the workers' material stays out of that call",
-          W1_TASK not in rendered and W2_GOAL not in rendered)
+    assert W1_TASK not in rendered and W2_GOAL not in rendered
 
-    model = dashboard.build(roster, "w2", root=root)
-    check("a worker with no task yet falls back to its own first message",
-          by_handle(model, "w2")["content"] == {"kind": "goal", "text": W2_GOAL,
-                                                "issue": None},
-          repr(by_handle(model, "w2")["content"]))
 
-    model = dashboard.build(roster, "ghost", root=root)
-    check("scoping an unannounced handle is an error, not a silent empty view",
-          model.get("scope_error") and "ghost" in model["scope_error"])
-    check("and no content leaks in its place",
-          all(s["content"] is None for s in model["sessions"]))
+def test_a_worker_with_no_task_yet_falls_back_to_its_own_first_message(tmp_path):
+    roster = fleet(tmp_path)
+    model = dashboard.build(roster, "w2", root=tmp_path)
+    assert by_handle(model, "w2")["content"] == {
+        "kind": "goal", "text": W2_GOAL, "issue": None}, \
+        repr(by_handle(model, "w2")["content"])
 
-    print("\ncost in dollars, only when priced:")
+
+def test_scoping_an_unannounced_handle_is_an_error_not_a_silent_empty_view(tmp_path):
+    roster = fleet(tmp_path)
+    model = dashboard.build(roster, "ghost", root=tmp_path)
+    assert model.get("scope_error") and "ghost" in model["scope_error"]
+    assert all(s["content"] is None for s in model["sessions"])
+
+
+# ----------------------------------------------------------------------
+# cost in dollars, only when priced
+# ----------------------------------------------------------------------
+
+def test_a_priced_session_gets_a_dollar_figure(tmp_path):
+    roster = fleet(tmp_path)
     rates = {"claude-sonnet-5": {"input": 3.0, "output": 15.0,
                                  "cache_read": 0.3, "cache_creation": 3.75}}
-    model = dashboard.build(roster, None, root=root, rates=rates)
-    check("a priced session gets a figure",
-          by_handle(model, "w1")["cost"]["usd"] is not None,
-          repr(by_handle(model, "w1")["cost"]))
-    check("an unpriced model stays None rather than undercounting",
-          dashboard.build(roster, None, root=root,
-                          rates={"other": {"input": 1}})["sessions"][0]["cost"]["usd"]
-          is None)
+    model = dashboard.build(roster, None, root=tmp_path, rates=rates)
+    assert by_handle(model, "w1")["cost"]["usd"] is not None, \
+        repr(by_handle(model, "w1")["cost"])
 
-    print("\nthe JSON model refuses to land in a git working tree:")
-    repo = tmp / "somerepo"
+
+def test_an_unpriced_model_stays_none_rather_than_undercounting(tmp_path):
+    roster = fleet(tmp_path)
+    model = dashboard.build(roster, None, root=tmp_path, rates={"other": {"input": 1}})
+    assert model["sessions"][0]["cost"]["usd"] is None
+
+
+# ----------------------------------------------------------------------
+# the JSON model refuses to land in a git working tree
+# ----------------------------------------------------------------------
+
+def test_a_path_nested_inside_a_repo_is_refused(tmp_path):
+    roster = fleet(tmp_path)
+    model = dashboard.build(roster, "w1", root=tmp_path)
+    repo = tmp_path / "somerepo"
     (repo / "docs").mkdir(parents=True)
     (repo / ".git").mkdir()
-    model = dashboard.build(roster, "w1", root=root)
     refused = False
     try:
         dashboard.write_json(model, str(repo / "docs" / "fleet.json"))
     except dashboard.WriteRefused as exc:
         refused = "somerepo" in str(exc)
-    check("a path nested inside a repo is refused", refused)
+    assert refused
 
-    worktree = tmp / "aworktree"
+
+def test_a_linked_worktree_git_as_a_file_is_refused_too(tmp_path):
+    roster = fleet(tmp_path)
+    model = dashboard.build(roster, "w1", root=tmp_path)
+    worktree = tmp_path / "aworktree"
     worktree.mkdir()
     (worktree / ".git").write_text("gitdir: /elsewhere/.git/worktrees/x\n")
     refused = False
@@ -344,71 +376,108 @@ def run(tmp: Path) -> int:
         dashboard.write_json(model, str(worktree / "fleet.json"))
     except dashboard.WriteRefused:
         refused = True
-    check("a linked worktree (.git as a file) is refused too", refused)
+    assert refused
 
-    outside = tmp / "state" / "fleet.json"
+
+def test_outside_any_repository_it_is_written_and_reloads_intact(tmp_path):
+    roster = fleet(tmp_path)
+    model = dashboard.build(roster, "w1", root=tmp_path)
+    outside = tmp_path / "state" / "fleet.json"
     written = dashboard.write_json(model, str(outside))
-    check("outside any repository it is written", written.is_file())
+    assert written.is_file()
     reloaded = json.loads(written.read_text())
-    check("and what lands is the model that was rendered",
-          reloaded["scope"] == "w1"
-          and reloaded["schema"] == dashboard.SCHEMA
-          and len(reloaded["sessions"]) == 3)
+    assert reloaded["scope"] == "w1"
+    assert reloaded["schema"] == dashboard.SCHEMA
+    assert len(reloaded["sessions"]) == 3
 
-    print("\nthrough the CLI (`ccd dashboard` pipes a roster reply into stdin):")
+
+# ----------------------------------------------------------------------
+# through the CLI (`ccd dashboard` pipes a roster reply into stdin)
+# ----------------------------------------------------------------------
+
+def _cli_env_and_reply(tmp_path):
+    roster = fleet(tmp_path)
     reply = json.dumps({"ok": True, "workers": roster})
-    env = dict(os.environ, CCD_TRANSCRIPT_ROOT=str(root),
+    env = dict(os.environ, CCD_TRANSCRIPT_ROOT=str(tmp_path),
                PYTHONPATH=str(Path(__file__).resolve().parent.parent))
-    sandbox = tmp / "cli"
+    return reply, env
+
+
+def _run_cli(reply, env, sandbox, *args):
+    return subprocess.run(
+        [sys.executable, "-m", "ccd_dashboard", *args],
+        input=reply, capture_output=True, text=True, env=env, cwd=sandbox)
+
+
+def test_cli_renders_markdown_by_default_with_no_content(tmp_path):
+    reply, env = _cli_env_and_reply(tmp_path)
+    sandbox = tmp_path / "cli"
     sandbox.mkdir()
+    out = _run_cli(reply, env, sandbox)
+    assert out.returncode == 0 and out.stdout.startswith("# ccd fleet"), \
+        repr(out.stdout[:80] + out.stderr[:200])
+    assert not any(t in out.stdout for t in (DISP_GOAL, W1_TASK, W2_GOAL))
 
-    def cli(*args):
-        return subprocess.run(
-            [sys.executable, "-m", "ccd_dashboard", *args],
-            input=reply, capture_output=True, text=True, env=env, cwd=sandbox)
 
-    out = cli()
-    check("it renders markdown by default",
-          out.returncode == 0 and out.stdout.startswith("# ccd fleet"),
-          repr(out.stdout[:80] + out.stderr[:200]))
-    check("with no content in it",
-          not any(t in out.stdout for t in (DISP_GOAL, W1_TASK, W2_GOAL)))
-    out = cli("--scope", "w1")
-    check("--scope adds that one session's line",
-          W1_TASK in out.stdout and DISP_GOAL not in out.stdout)
-    out = cli("--json")
-    check("--json prints the model",
-          json.loads(out.stdout)["schema"] == dashboard.SCHEMA)
-    check("and nothing is written by default — the model is ephemeral",
-          not list(sandbox.iterdir()), repr(list(sandbox.iterdir())))
-    out = cli("--write", str(repo / "fleet.json"))
-    check("--write into a repo exits non-zero and says why",
-          out.returncode == 1 and "refusing to write" in out.stderr,
-          repr(out.stderr[:200]))
-    check("and leaves no file behind", not (repo / "fleet.json").exists())
-    out = cli("--write", str(tmp / "state" / "cli.json"))
-    check("--write outside one succeeds",
-          out.returncode == 0 and (tmp / "state" / "cli.json").is_file())
-    out = cli("--scope")
-    check("a malformed invocation fails loudly", out.returncode != 0)
+def test_cli_scope_flag_adds_that_sessions_line(tmp_path):
+    reply, env = _cli_env_and_reply(tmp_path)
+    sandbox = tmp_path / "cli"
+    sandbox.mkdir()
+    out = _run_cli(reply, env, sandbox, "--scope", "w1")
+    assert W1_TASK in out.stdout and DISP_GOAL not in out.stdout
 
-    print("\nthe dashboard is read-only:")
-    cli = (Path(__file__).resolve().parent.parent / "ccd").read_text()
+
+def test_cli_json_flag_prints_the_model_and_writes_nothing(tmp_path):
+    reply, env = _cli_env_and_reply(tmp_path)
+    sandbox = tmp_path / "cli"
+    sandbox.mkdir()
+    out = _run_cli(reply, env, sandbox, "--json")
+    assert json.loads(out.stdout)["schema"] == dashboard.SCHEMA
+    assert not list(sandbox.iterdir()), repr(list(sandbox.iterdir()))
+
+
+def test_cli_write_into_a_repo_refuses_and_leaves_no_file(tmp_path):
+    reply, env = _cli_env_and_reply(tmp_path)
+    sandbox = tmp_path / "cli"
+    sandbox.mkdir()
+    repo = tmp_path / "somerepo"
+    (repo / "docs").mkdir(parents=True)
+    (repo / ".git").mkdir()
+    out = _run_cli(reply, env, sandbox, "--write", str(repo / "fleet.json"))
+    assert out.returncode == 1 and "refusing to write" in out.stderr, \
+        repr(out.stderr[:200])
+    assert not (repo / "fleet.json").exists()
+
+
+def test_cli_write_outside_a_repo_succeeds(tmp_path):
+    reply, env = _cli_env_and_reply(tmp_path)
+    sandbox = tmp_path / "cli"
+    sandbox.mkdir()
+    out = _run_cli(reply, env, sandbox, "--write", str(tmp_path / "state" / "cli.json"))
+    assert out.returncode == 0 and (tmp_path / "state" / "cli.json").is_file()
+
+
+def test_cli_a_malformed_invocation_fails_loudly(tmp_path):
+    reply, env = _cli_env_and_reply(tmp_path)
+    sandbox = tmp_path / "cli"
+    sandbox.mkdir()
+    out = _run_cli(reply, env, sandbox, "--scope")
+    assert out.returncode != 0
+
+
+# ----------------------------------------------------------------------
+# the dashboard is read-only
+# ----------------------------------------------------------------------
+
+def test_ccd_dashboard_only_calls_roster(repo_root):
+    cli = (repo_root / "ccd").read_text()
     body = cli.split("cmd_dashboard() {", 1)[1].split("\ncmd_ping()", 1)[0]
     calls = [line for line in body.splitlines() if "_ccd_rpc" in line]
-    check("its only broker call is `roster`",
-          len(calls) == 1 and "_ccd_rpc roster" in calls[0], repr(calls))
-    for method in ("send", "claim", "release", "retire", "announce"):
-        check(f"it never calls {method}", f"_ccd_rpc {method}" not in body)
-
-    print()
-    if FAILURES:
-        print(f"FAILED ({len(FAILURES)}): {', '.join(FAILURES)}")
-        return 1
-    print("PASS — metadata is system-wide, content is scoped, "
-          "and the writer stays out of git trees")
-    return 0
+    assert len(calls) == 1 and "_ccd_rpc roster" in calls[0], repr(calls)
 
 
-if __name__ == "__main__":
-    sys.exit(main())
+@pytest.mark.parametrize("method", ["send", "claim", "release", "retire", "announce"])
+def test_ccd_dashboard_never_calls_a_mutating_method(repo_root, method):
+    cli = (repo_root / "ccd").read_text()
+    body = cli.split("cmd_dashboard() {", 1)[1].split("\ncmd_ping()", 1)[0]
+    assert f"_ccd_rpc {method}" not in body
