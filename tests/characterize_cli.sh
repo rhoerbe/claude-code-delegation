@@ -49,8 +49,25 @@ export CLAUDE_CODE_SESSION_ID=""
 # that never exists so every pick/launch case here hits the same
 # no-manifest error regardless of whatever this machine's real
 # ~/.config/ccd/mappings.json does or doesn't contain (hosting#131 phase 4)
-# — this instrument must never depend on, or touch, that file.
+# — this instrument must never depend on, or touch, that file. The
+# manifest-present cases further below override this per-case rather than
+# changing the default, so every OTHER case keeps proving the CLI works with
+# no manifest at all.
 export CCD_MAPPINGS="$WORK/mappings.json"
+
+# The committed fixture manifest (tests/fixtures/sample-mappings.json) and a
+# stub launcher standing in for `claude`/`claude-openrouter` (hosting#131
+# phase 4 follow-up: the billing suffix) — never a real launcher, never
+# ~/.config/ccd/mappings.json. Copied under both launcher names the fixture
+# manifest's entries use, onto a $PATH prefix used only by the cases below
+# that explicitly opt into it.
+SAMPLE_MANIFEST="$SCRIPT_DIR/fixtures/sample-mappings.json"
+STUB_BIN="$WORK/bin"
+mkdir -p "$STUB_BIN"
+cp "$SCRIPT_DIR/fixtures/stub-launcher" "$STUB_BIN/stub-claude"
+cp "$SCRIPT_DIR/fixtures/stub-launcher" "$STUB_BIN/stub-claude-openrouter"
+chmod +x "$STUB_BIN/stub-claude" "$STUB_BIN/stub-claude-openrouter"
+STUB_PATH="$STUB_BIN:$PATH"
 
 PASS=0
 FAIL=0
@@ -83,7 +100,13 @@ record_case() {
   shift
 
   local out err rc
-  out="$(env "${envs[@]+"${envs[@]}"}" "$CCD" "$@" 2>"$WORK/.err")"; rc=$?
+  # stdin is always /dev/null, never this script's own: `ccd pick`/`ccd
+  # launch` (hosting#131 phase 4) read stdin when it IS a terminal, and this
+  # script's own stdin is a terminal whenever someone runs it by hand — which
+  # would otherwise block the recording on a read nothing ever answers. Every
+  # other subcommand here already ignores stdin, so this changes nothing for
+  # them and removes a real hang for these two.
+  out="$(env "${envs[@]+"${envs[@]}"}" "$CCD" "$@" </dev/null 2>"$WORK/.err")"; rc=$?
   err="$(cat "$WORK/.err")"
 
   local rendered
@@ -227,6 +250,31 @@ record_case identity-nopid-new-effort CLAUDE_PID= -- announce w-id2 a-model high
 record_case identity-nopid-force CLAUDE_PID= -- announce w-id2 a-model high --force
 record_case identity-ret -- ret w-id
 record_case identity-ret2 -- ret w-id2
+
+# Launch against a real manifest (hosting#131 phase 4 follow-up: the billing
+# suffix, ADR-0002 revised e782da4). Placed after the roster is empty and on
+# their own handles, same reason as the identity cases above — these use
+# CCD_MAPPINGS/PATH overrides rather than the harness defaults, so only these
+# cases ever see a manifest or a launcher.
+echo "=== launch (real manifest, stub launcher) ==="
+record_case pick-real-manifest CCD_MAPPINGS="$SAMPLE_MANIFEST" -- pick
+record_case launch-with-billing \
+  CCD_MAPPINGS="$SAMPLE_MANIFEST" PATH="$STUB_PATH" \
+  -- launch kimi-k3-1m-max --issue 119 --phase 3
+record_case launch-without-billing \
+  CCD_MAPPINGS="$SAMPLE_MANIFEST" PATH="$STUB_PATH" \
+  -- launch claude-sonnet-5-medium --issue 119 --phase 3
+record_case launch-explicit-handle-ignores-billing \
+  CCD_MAPPINGS="$SAMPLE_MANIFEST" PATH="$STUB_PATH" \
+  -- launch kimi-k3-1m-max --handle exact-name
+record_case launch-unknown-mapping \
+  CCD_MAPPINGS="$SAMPLE_MANIFEST" \
+  -- launch not-a-real-id --issue 1 --phase 1
+record_case launch-ls-after CCD_MAPPINGS="$SAMPLE_MANIFEST" -- ls
+record_case launch-ret-billed -- ret "119-3-kimi-k3-1m-max-api"
+record_case launch-ret-unbilled -- ret "119-3-claude-sonnet-5-medium"
+record_case launch-ret-explicit -- ret exact-name
+record_case launch-ls-clean -- ls
 
 record_case broker-stop -- broker stop
 record_case broker-stop-again -- broker stop

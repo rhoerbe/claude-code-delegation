@@ -189,14 +189,30 @@ Each entry:
 | `launcher` | yes | A **bare command name**, resolved on `$PATH` at launch. Not a path, not a name with arguments. It must accept Claude Code's own `--model`/`--effort`/`--name` flags, since that is how the picked entry reaches the session. Not derivable from anything else: one model is often reachable through more than one launcher. |
 | `model` | yes | The model id, as its provider writes it, passed **verbatim** to `--model` — `claude-sonnet-5`, `moonshotai/kimi-k3`, `deepseek/deepseek-v4.1-flash`. May carry a `[1m]` context suffix, see below. This is also what the roster advertises and what an observed-vs-declared check compares against. |
 | `effort` | no | `low` \| `medium` \| `high` \| `xhigh` \| `max`. Requested, not guaranteed — and **omitted entirely** for models that never receive it. |
+| `billing` | no | `sub` \| `api` — subscription seat or metered per-token access. **Stored, not derived** (see below); omitted where it does not apply. |
 | `notes` | no | Free text for the operator — why this effort, what the benchmark said. Shown as an aside, never as the label. |
 
-That is the whole stored shape. Two keys carry a launch, a third qualifies it
-where it applies, and the fourth is for the human.
+That is the whole stored shape. Two keys carry a launch, two qualify it where
+they apply, and the last is for the human.
 
-**Derived, never stored: the `id` and the label.** Both come from the fields
-above, so neither can contradict them — see [The id is derived](#the-id-is-derived)
-and [The label is derived](#the-label-is-derived).
+**Why `billing` is stored, unlike everything else optional here.** It names a
+fact about the *route*, not the model: the same model can sit behind a
+subscription launcher or a metered one, and no model string can yield which
+one a given entry uses — only the deployment layer that rendered the
+launcher knows that (the same layer this schema already defers to for
+launcher names; see [What this repo is not](#what-this-repo-is-not) above).
+That is the opposite situation from the retired `slot`: a stored slot
+could *contradict* the model beside it, which is issue #10's defect; a stored
+`billing` cannot contradict anything here, because nothing here could have
+computed it in the first place. hosting's own session-label convention names
+it as `sub`/`api` (lowercase), and this schema matches that spelling rather
+than inventing a second one.
+
+**Derived, never stored: the `id` and the label.** Both come from `model` and
+`effort` only — `billing` plays no part in either, so two entries agreeing on
+launcher, model and effort but differing only in billing are still a true
+duplicate, not two things for billing to tell apart. See
+[The id is derived](#the-id-is-derived) and [The label is derived](#the-label-is-derived).
 
 Unknown keys, at either level, are ignored; **retired keys are refused**.
 Those are two halves of one rule, not an exception to it. Ignoring an unknown
@@ -287,10 +303,11 @@ visibly not the label, which is the difference that matters.
 
 ### Worked example
 
-Three first-party entries (bare `claude`), one of them with no effort because
-its model never receives one, and two reached through a remapped launcher —
-one carrying the `[1m]` suffix. `claude-openrouter` here is an illustrative
-name only; real launcher names live in the deployment layer, not in this repo:
+Three first-party entries (bare `claude`, billed as a subscription seat), one
+of them with no effort because its model never receives one, and two reached
+through a remapped launcher billed per token — one carrying the `[1m]`
+suffix. `claude-openrouter` here is an illustrative name only; real launcher
+names live in the deployment layer, not in this repo:
 
 ```json
 {
@@ -299,33 +316,39 @@ name only; real launcher names live in the deployment layer, not in this repo:
     {
       "launcher": "claude",
       "model": "claude-sonnet-5",
-      "effort": "medium"
+      "effort": "medium",
+      "billing": "sub"
     },
     {
       "launcher": "claude",
       "model": "claude-opus-5",
-      "effort": "high"
+      "effort": "high",
+      "billing": "sub"
     },
     {
       "launcher": "claude",
       "model": "claude-haiku-4-5",
+      "billing": "sub",
       "notes": "no effort: this model never receives one, so claiming a value would be fiction"
     },
     {
       "launcher": "claude-openrouter",
       "model": "moonshotai/kimi-k3[1m]",
       "effort": "max",
+      "billing": "api",
       "notes": "effort set by hand from benchmark reading; [1m] lifts the assumed 200k window"
     },
     {
       "launcher": "claude-openrouter",
-      "model": "deepseek/deepseek-v4.1-flash"
+      "model": "deepseek/deepseek-v4.1-flash",
+      "billing": "api"
     }
   ]
 }
 ```
 
-Nothing in that file states an id or a label; both are derived. A picker
+Nothing in that file states an id or a label; both are derived, and neither
+shows `billing` — it identifies the route, not the model. A picker
 renders it as:
 
 ```

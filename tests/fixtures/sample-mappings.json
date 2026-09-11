@@ -14,7 +14,8 @@
     {
       "launcher": "stub-claude-openrouter",
       "model": "moonshotai/kimi-k3[1m]",
-      "effort": "max"
+      "effort": "max",
+      "billing": "api"
     }
   ]
 }

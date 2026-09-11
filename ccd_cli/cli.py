@@ -605,18 +605,15 @@ def cmd_launch(argv: list) -> int:
     if handle_override:
         handle = handle_override
     else:
-        # hosting's ADR-0002 shape is <issue>-<phase>-<slotname>-<effort>-
-        # <billing>. Neither slotname nor billing survives here: slotname was
-        # a route to a model (ADR-0009) and does not exist for a remapped
-        # entry (there is no "slot" for moonshotai/kimi-k3), and billing was
-        # inferred from the launcher/profile by the DEPLOYMENT layer, which
-        # this repo deliberately has no visibility into (ADR-0009 "why the
-        # deployment layer produces the file"). Using <issue>-<phase>-<id>
-        # instead: the derived manifest id already encodes model+effort, the
-        # same information slotname+effort carried, without inventing a slot
-        # that does not exist for every entry. This is a real gap against the
-        # ADR as written, not a workaround pretending to comply — reported
-        # upstream rather than papered over here.
+        # hosting's ADR-0002 (revised e782da4, after this file's earlier
+        # <issue>-<phase>-<id> finding went to the user): the shape is
+        # <issue>-<phase>-<mapping-id>[-<billing>] — billing appended only
+        # when the picked entry has one, since it is optional in the
+        # manifest (ccd_mappings, hosting#131 phase 4 follow-up). slotname
+        # from the original ADR text still has no equivalent here and stays
+        # dropped, unchanged from before: there is no "slot" for a remapped
+        # entry like moonshotai/kimi-k3, and the derived mapping id already
+        # carries the model+effort identity slotname+effort used to.
         if issue is None:
             issue = _prompt_field("launch", "issue", "--issue")
             if issue is None:
@@ -626,6 +623,8 @@ def cmd_launch(argv: list) -> int:
             if phase is None:
                 return 2
         handle = f"{issue}-{phase}-{ident}"
+        if entry.get("billing"):
+            handle += f"-{entry['billing']}"
 
     try:
         launcher_path = m.resolve_launcher(entry)

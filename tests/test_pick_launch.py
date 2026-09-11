@@ -33,7 +33,11 @@ STUB_LAUNCHER = FIXTURES / "stub-launcher"
 
 # Derived ids for the three sample-mappings.json entries (ADR-0009's own
 # derivation — asserted once here so a future manifest edit fails loudly
-# rather than silently invalidating every id string below).
+# rather than silently invalidating every id string below). ID_KIMI's entry
+# carries `billing: "api"`; billing plays no part in id derivation
+# (ccd_mappings' own contract, hosting#131 phase 4 follow-up), so the id is
+# unaffected — only ID_SONNET and ID_HAIKU's entries have no billing at all,
+# which is what exercises both branches of the handle's optional suffix.
 ID_SONNET = "claude-sonnet-5-medium"
 ID_HAIKU = "claude-haiku-4-5"
 ID_KIMI = "kimi-k3-1m-max"
@@ -247,6 +251,81 @@ def test_launch_reserves_the_handle_on_the_broker(with_broker):
     assert out.returncode == 0, repr(out.stderr)
     ls = run_ccd(with_broker, "ls")
     assert f"7-2-{ID_SONNET}" in ls.stdout
+
+
+# ----------------------------------------------------------------------
+# ccd launch — the billing suffix (hosting ADR-0002, revised e782da4):
+# <issue>-<phase>-<mapping-id>[-<billing>], appended only when the picked
+# entry has one.
+# ----------------------------------------------------------------------
+
+def test_launch_appends_the_billing_suffix_when_the_entry_has_one(with_broker):
+    out = run_ccd(with_broker, "launch", ID_KIMI, "--issue", "119", "--phase", "3")
+    assert out.returncode == 0, repr(out.stderr)
+    data = json.loads(out.stdout)
+    assert data["CCD_HANDLE"] == f"119-3-{ID_KIMI}-api"
+    assert data["args"][:2] == ["--name", f"119-3-{ID_KIMI}-api"]
+
+
+def test_launch_produces_no_suffix_when_the_entry_has_no_billing(with_broker):
+    out = run_ccd(with_broker, "launch", ID_SONNET, "--issue", "119", "--phase", "3")
+    assert out.returncode == 0, repr(out.stderr)
+    data = json.loads(out.stdout)
+    # Exactly the three-part shape phase 4 shipped — not a trailing "-",
+    # not a stray empty segment.
+    assert data["CCD_HANDLE"] == f"119-3-{ID_SONNET}"
+
+
+def test_launch_explicit_handle_never_gets_a_billing_suffix(with_broker):
+    # --handle is a full override: the human stated the literal string they
+    # want, so it is used verbatim even for an entry that has billing —
+    # the suffix belongs to the *derived* shape only.
+    out = run_ccd(with_broker, "launch", ID_KIMI, "--handle", "exact-name")
+    assert out.returncode == 0, repr(out.stderr)
+    data = json.loads(out.stdout)
+    assert data["CCD_HANDLE"] == "exact-name"
+
+
+def test_launch_still_sets_only_ccd_mapping_not_a_second_billing_variable(with_broker):
+    # CCD_MAPPING stays the one environment variable a launched session
+    # carries (ADR-0009) — billing changes the handle string, never a
+    # second variable alongside it.
+    out = run_ccd(with_broker, "launch", ID_KIMI, "--issue", "1", "--phase", "1")
+    assert out.returncode == 0, repr(out.stderr)
+    data = json.loads(out.stdout)
+    assert data["CCD_MAPPING"] == ID_KIMI
+    assert "CCD_BILLING" not in data
+    assert all(a not in ("--billing", "CCD_BILLING") for a in data["args"])
+
+
+def test_launch_refuses_a_manifest_where_two_entries_differ_only_in_billing(
+    tmp_path, repo_root, stub_path_dir,
+):
+    # ccd_mappings' own contract (hosting#131 phase 4 follow-up): billing
+    # plays no part in id derivation, so two entries agreeing on launcher,
+    # model and effort but differing only in billing still derive the same
+    # id and validate() refuses the manifest as a genuine duplicate before
+    # `ccd launch` ever gets to pick between them — confirmed here at the
+    # integration level rather than assumed from the schema tests alone.
+    manifest = tmp_path / "dupe.json"
+    manifest.write_text(json.dumps({
+        "schema": 1,
+        "mappings": [
+            {"launcher": "stub-claude", "model": "claude-sonnet-5",
+             "effort": "medium", "billing": "sub"},
+            {"launcher": "stub-claude", "model": "claude-sonnet-5",
+             "effort": "medium", "billing": "api"},
+        ],
+    }))
+    env = dict(os.environ)
+    env["CCD_MAPPINGS"] = str(manifest)
+    env["CCD_SOCKET"] = str(tmp_path / "ccd.sock")
+    env["PATH"] = f"{stub_path_dir}{os.pathsep}{env.get('PATH', '')}"
+    env["PYTHONPATH"] = str(repo_root)
+    out = run_ccd(env, "launch", "claude-sonnet-5-medium",
+                  "--issue", "1", "--phase", "1")
+    assert out.returncode == 1
+    assert "both derive the id" in out.stderr
 
 
 def test_launch_with_explicit_handle_skips_issue_and_phase(with_broker):

@@ -1,0 +1,5 @@
+argv: ccd launch claude-sonnet-5-medium --issue 119 --phase 3
+exit: 0
+--- stdout ---
+{"argv0": "<TMP>/bin/stub-claude", "args": ["--name", "119-3-claude-sonnet-5-medium", "--model", "claude-sonnet-5", "--effort", "medium"], "CCD_MAPPING": "claude-sonnet-5-medium", "CCD_HANDLE": "119-3-claude-sonnet-5-medium", "CCD_SOCKET": "<TMP>/ccd.sock", "CCD_MODEL": null, "CCD_EFFORT": null}
+--- stderr ---

@@ -1,0 +1,5 @@
+argv: ccd ret exact-name
+exit: 0
+--- stdout ---
+retired exact-name
+--- stderr ---

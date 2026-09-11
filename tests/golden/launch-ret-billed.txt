@@ -1,0 +1,5 @@
+argv: ccd ret 119-3-kimi-k3-1m-max-api
+exit: 0
+--- stdout ---
+retired 119-3-kimi-k3-1m-max-api
+--- stderr ---
