@@ -1,0 +1,6 @@
+argv: ccd dashboard --scope
+exit: 2
+--- stdout ---
+
+--- stderr ---
+ccd dashboard: --scope needs a value

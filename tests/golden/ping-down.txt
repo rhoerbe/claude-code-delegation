@@ -1,0 +1,6 @@
+argv: ccd ping
+exit: 1
+--- stdout ---
+
+--- stderr ---
+down (broker unreachable at <TMP>/ccd.sock)

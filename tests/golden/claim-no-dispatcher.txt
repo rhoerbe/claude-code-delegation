@@ -1,0 +1,6 @@
+argv: ccd claim w1
+exit: 2
+--- stdout ---
+
+--- stderr ---
+ccd claim: no dispatcher given and $CCD_HANDLE not set

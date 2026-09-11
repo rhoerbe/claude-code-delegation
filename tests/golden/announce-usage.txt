@@ -1,0 +1,6 @@
+argv: ccd announce
+exit: 2
+--- stdout ---
+
+--- stderr ---
+usage: ccd announce [<handle>] <model> <effort>  ($CCD_HANDLE is the default handle)

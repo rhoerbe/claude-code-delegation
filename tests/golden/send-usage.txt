@@ -1,0 +1,6 @@
+argv: ccd send
+exit: 2
+--- stdout ---
+
+--- stderr ---
+usage: ccd send <to> <msg> [-f from]

@@ -1,0 +1,5 @@
+argv: ccd ping
+exit: 0
+--- stdout ---
+ok (ccd-broker 1.3.0) up 0m
+--- stderr ---

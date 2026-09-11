@@ -1,0 +1,6 @@
+argv: ccd dashboard
+exit: 1
+--- stdout ---
+
+--- stderr ---
+ccd dashboard: broker unreachable at <TMP>/ccd.sock

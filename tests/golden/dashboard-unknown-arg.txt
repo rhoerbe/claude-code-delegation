@@ -1,0 +1,6 @@
+argv: ccd dashboard --wat
+exit: 2
+--- stdout ---
+
+--- stderr ---
+ccd dashboard: unknown argument: --wat

@@ -1,0 +1,5 @@
+argv: ccd claim w1 someone-else --force
+exit: 0
+--- stdout ---
+claimed w1 for someone-else
+--- stderr ---

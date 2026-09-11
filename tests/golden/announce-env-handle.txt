@@ -1,0 +1,5 @@
+argv: ccd announce a-model high
+exit: 0
+--- stdout ---
+announced disp (a-model/high)
+--- stderr ---

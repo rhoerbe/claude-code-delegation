@@ -1,0 +1,5 @@
+argv: ccd broker status
+exit: 1
+--- stdout ---
+down
+--- stderr ---

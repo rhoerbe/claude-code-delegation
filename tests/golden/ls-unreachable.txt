@@ -1,0 +1,6 @@
+argv: ccd ls
+exit: 1
+--- stdout ---
+
+--- stderr ---
+ccd ls: broker unreachable at <TMP>/ccd.sock

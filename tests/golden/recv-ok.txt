@@ -1,0 +1,5 @@
+argv: ccd recv w1 -t 5
+exit: 0
+--- stdout ---
+disp: hello
+--- stderr ---

@@ -1,0 +1,6 @@
+argv: ccd claim w1 someone-else
+exit: 1
+--- stdout ---
+
+--- stderr ---
+error: 'w1' is already claimed by 'disp' (pass force to take it over)

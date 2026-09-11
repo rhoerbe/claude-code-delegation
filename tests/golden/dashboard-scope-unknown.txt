@@ -1,0 +1,13 @@
+argv: ccd dashboard --scope nobody
+exit: 0
+--- stdout ---
+# ccd fleet — 3 sessions (<TS>)
+
+| handle | role | model/effort | owner | status | last activity | cost | tree |
+|---|---|---|---|---|---|---|---|
+| `disp` | worker | high | — | unknown | — | — | ccd-py-cli |
+| `w-nopid` | worker | low | — | unknown | — | — | ccd-py-cli |
+| `w1` | worker | low | — | unknown | — | — | ccd-py-cli |
+
+> **no announced handle 'nobody'** — content not shown.
+--- stderr ---

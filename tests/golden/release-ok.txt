@@ -1,0 +1,5 @@
+argv: ccd release w1
+exit: 0
+--- stdout ---
+released w1
+--- stderr ---

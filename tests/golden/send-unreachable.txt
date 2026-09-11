@@ -1,0 +1,6 @@
+argv: ccd send a b -f c
+exit: 1
+--- stdout ---
+
+--- stderr ---
+ccd send: broker unreachable at <TMP>/ccd.sock

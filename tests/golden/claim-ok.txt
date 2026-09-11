@@ -1,0 +1,5 @@
+argv: ccd claim w1 disp
+exit: 0
+--- stdout ---
+claimed w1 for disp
+--- stderr ---

@@ -1,0 +1,6 @@
+argv: ccd ret
+exit: 2
+--- stdout ---
+
+--- stderr ---
+ccd ret: no handle given and $CCD_HANDLE not set

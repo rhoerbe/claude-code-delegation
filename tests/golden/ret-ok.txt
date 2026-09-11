@@ -1,0 +1,5 @@
+argv: ccd ret w1
+exit: 0
+--- stdout ---
+retired w1
+--- stderr ---

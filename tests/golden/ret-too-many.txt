@@ -1,0 +1,6 @@
+argv: ccd ret a b
+exit: 2
+--- stdout ---
+
+--- stderr ---
+usage: ccd ret [<handle>]  ($CCD_HANDLE is the default handle)

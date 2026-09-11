@@ -1,0 +1,5 @@
+argv: ccd announce w1 a-model low
+exit: 0
+--- stdout ---
+announced w1 (a-model/low)
+--- stderr ---
