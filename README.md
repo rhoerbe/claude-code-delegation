@@ -133,8 +133,9 @@ What is public is the shape, the validation rules, and a reference reader
   name and the `effort` field can contradict each other.
 - **effort** is its own field with exactly one value: `low`, `medium`, `high`,
   `xhigh` or `max`.
-- So an entry displayed as `Opus/Max → Kimi-K3` stores `slot: "opus"` and
-  `effort: "max"`, never `slot: "opus/max"`.
+- So an entry shown as `Opus/Max → Kimi-K3` stores `slot: "opus"` and
+  `effort: "max"`, never `slot: "opus/max"` — and that label is *derived from
+  those two fields*, never stored beside them.
 
 ### Effort is requested, not guaranteed
 
@@ -173,12 +174,45 @@ Each entry:
 | `effort` | yes | `low` \| `medium` \| `high` \| `xhigh` \| `max`. Requested, not guaranteed — see above. |
 | `launcher` | yes | A **bare command name**, resolved on `$PATH` at launch. Not a path, not a name with arguments. It must accept Claude Code's own `--model`/`--effort`/`--name` flags, since that is how the picked entry reaches the session. |
 | `model` | yes | The model expected to actually serve the session — `claude-sonnet-5` for a first-party entry, `moonshotai/kimi-k3` for a remapped one. This is what the roster advertises and what an observed-vs-declared check compares against. |
-| `display` | yes | The human-readable label a picker shows. Presentation only: the picker shows `slot`, `effort` and `model` beside it, so a label that drifts is visible rather than believed. |
-| `notes` | no | Free text for the operator — why this effort, what the benchmark said. |
+| `notes` | no | Free text for the operator — why this effort, what the benchmark said. Shown as an aside, never as the label. |
+
+There is **no `display` key**. The label a picker shows is derived from the
+entry — see [The label is derived](#the-label-is-derived) — so it cannot
+contradict the fields it describes.
 
 Unknown keys, at either level, are ignored rather than refused: the file is
 machine-rendered, and a producing layer that learns a new field should not
 break every older reader.
+
+### The label is derived
+
+A picker shows each entry as a label, and that label is computed from `slot`,
+`effort` and `model` by `ccd_mappings.display()` — there is no stored field for
+it and no override. A stored label is free text that can disagree with the
+fields beside it, which is issue #10's defect one level down; deriving it makes
+that disagreement unrepresentable rather than merely discouraged. One function
+means the picker and any other renderer cannot diverge either.
+
+Two shapes come out of it:
+
+| entry | label |
+|---|---|
+| slot `opus`, effort `max`, model `moonshotai/kimi-k3` | `Opus/Max → Kimi-K3` |
+| slot `sonnet`, effort `medium`, model `claude-sonnet-5` | `Sonnet/Medium` |
+
+The first-party case collapses: when the model is the one the slot already
+names, `Sonnet/Medium → Claude-Sonnet-5` would say it twice. An entry whose
+first-party model names a *different* slot than it asks for does **not**
+collapse — `Opus/Xhigh → Claude-Sonnet-5` — because that pairing is worth
+showing, not hiding.
+
+The model name is prettified mechanically: last path segment, title-cased per
+word. There is no table of model families, so an acronym comes out like any
+other word (`z-ai/glm-5.3-flash` → `Glm-5.3-Flash`). Shipping such a table
+would be exactly the provider-specific knowledge this repo keeps out.
+
+If an entry needs a human aside, that is what `notes` is for — and `notes` is
+visibly not the label, which is the difference that matters.
 
 ### Worked example
 
@@ -195,16 +229,14 @@ launcher names live in the deployment layer, not in this repo:
       "slot": "sonnet",
       "effort": "medium",
       "launcher": "claude",
-      "model": "claude-sonnet-5",
-      "display": "Sonnet/Medium"
+      "model": "claude-sonnet-5"
     },
     {
       "id": "opus-5-high",
       "slot": "opus",
       "effort": "high",
       "launcher": "claude",
-      "model": "claude-opus-5",
-      "display": "Opus/High"
+      "model": "claude-opus-5"
     },
     {
       "id": "kimi-k3-max",
@@ -212,7 +244,6 @@ launcher names live in the deployment layer, not in this repo:
       "effort": "max",
       "launcher": "claude-openrouter",
       "model": "moonshotai/kimi-k3",
-      "display": "Opus/Max → Kimi-K3",
       "notes": "effort set by hand from benchmark reading; requested, not guaranteed"
     },
     {
@@ -220,8 +251,7 @@ launcher names live in the deployment layer, not in this repo:
       "slot": "sonnet",
       "effort": "high",
       "launcher": "claude-openrouter",
-      "model": "z-ai/glm-5.3-flash",
-      "display": "Sonnet/High → GLM-5.3-Flash"
+      "model": "z-ai/glm-5.3-flash"
     }
   ]
 }
@@ -232,6 +262,15 @@ Note `kimi-k3-max` and `glm-5.3-flash-high` share no slot with each other and
 may name one slot; only `id` is unique. That is the point of deriving the id
 from the real model — ids built from `<launcher>-<slot>` would collide exactly
 where the difference matters.
+
+A picker renders that file as:
+
+```
+1. Sonnet/Medium
+2. Opus/High
+3. Opus/Max → Kimi-K3
+4. Sonnet/High → Glm-5.3-Flash
+```
 
 ### Validation, and where it lives
 

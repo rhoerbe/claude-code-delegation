@@ -36,7 +36,6 @@ EXAMPLE = {
             "effort": "medium",
             "launcher": "claude",
             "model": "claude-sonnet-5",
-            "display": "Sonnet/Medium",
         },
         {
             "id": "opus-5-high",
@@ -44,7 +43,6 @@ EXAMPLE = {
             "effort": "high",
             "launcher": "claude",
             "model": "claude-opus-5",
-            "display": "Opus/High",
         },
         {
             "id": "kimi-k3-max",
@@ -52,7 +50,6 @@ EXAMPLE = {
             "effort": "max",
             "launcher": "claude-openrouter",
             "model": "moonshotai/kimi-k3",
-            "display": "Opus/Max → Kimi-K3",
             "notes": "effort set by hand from benchmark reading; requested, not guaranteed",
         },
         {
@@ -61,7 +58,6 @@ EXAMPLE = {
             "effort": "high",
             "launcher": "claude-openrouter",
             "model": "z-ai/glm-5.3-flash",
-            "display": "Sonnet/High → GLM-5.3-Flash",
         },
     ],
 }
@@ -82,7 +78,6 @@ def entry(**over) -> dict:
         "effort": "medium",
         "launcher": "claude",
         "model": "claude-sonnet-5",
-        "display": "Sonnet/Medium",
     }
     base.update(over)
     return base
@@ -135,11 +130,46 @@ def run(tmp: Path) -> int:
           any(e["launcher"] != "claude" for e in EXAMPLE["mappings"]))
     check("every id is unique",
           len({e["id"] for e in EXAMPLE["mappings"]}) == len(EXAMPLE["mappings"]))
-    # ADR-0009: the display is presentation, the fields are the truth — but an
-    # example that contradicts itself would teach the wrong thing.
-    kimi = m.find(EXAMPLE, "kimi-k3-max")
-    check("the example's display agrees with its own effort",
-          "Max" in kimi["display"] and kimi["effort"] == "max", repr(kimi))
+    check("no entry stores a label", not any(
+        "display" in e for e in EXAMPLE["mappings"]))
+    # README prints what a picker makes of that file. Read it back rather than
+    # restating it here, so the listing cannot drift from the derivation.
+    listing = re.search(r"A picker renders that file as:\n\n```\n(.*?)```",
+                        readme.read_text(encoding="utf-8"), re.S)
+    check("README shows the rendered picker listing", listing is not None)
+    if listing:
+        shown = [line.split(". ", 1)[1]
+                 for line in listing.group(1).strip().splitlines()]
+        derived = [m.display(e) for e in EXAMPLE["mappings"]]
+        check("the example renders as the listing README publishes",
+              shown == derived, f"README {shown!r} != derived {derived!r}")
+
+    print("\nthe label is derived, so it cannot contradict the fields:")
+    # ADR-0009: a stored label is free text beside the fields it describes —
+    # #10's defect one level down. There is no field and no override.
+    check("'display' is not a required key", "display" not in m.REQUIRED)
+    check("a stored 'display' is ignored, not honoured",
+          m.display(entry(display="Haiku/Low")) == "Sonnet/Medium")
+    check("remapped renders both halves with an arrow",
+          m.display(entry(slot="opus", effort="max",
+                          model="moonshotai/kimi-k3")) == "Opus/Max → Kimi-K3")
+    check("first-party collapses, rather than saying it twice",
+          m.display(entry(slot="sonnet", effort="medium",
+                          model="claude-sonnet-5")) == "Sonnet/Medium")
+    # A first-party model naming a different slot than the entry asks for is
+    # worth showing, not hiding, so it does not collapse.
+    check("a first-party model naming another slot does not collapse",
+          m.display(entry(slot="opus", effort="xhigh",
+                          model="claude-sonnet-5")) == "Opus/Xhigh → Claude-Sonnet-5")
+    check("the provider prefix is dropped",
+          m.display(entry(slot="sonnet", effort="high",
+                          model="z-ai/glm-5.3-flash")) == "Sonnet/High → Glm-5.3-Flash")
+    check("every slot and effort renders title-cased",
+          {m.display(entry(slot=s, effort=e, model="x/y")).split(" ")[0]
+           for s in m.SLOTS for e in m.EFFORTS}
+          == {f"{s.title()}/{e.title()}" for s in m.SLOTS for e in m.EFFORTS})
+    check("an empty model still renders the asked-for pair",
+          m.display({"slot": "haiku", "effort": "low", "model": ""}) == "Haiku/Low")
 
     print("\nthe closed sets are closed:")
     for slot in m.SLOTS:

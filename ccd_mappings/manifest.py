@@ -32,7 +32,7 @@ EFFORTS = ("low", "medium", "high", "xhigh", "max")
 # launched session and is read back from rosters and transcripts.
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 
-REQUIRED = ("id", "slot", "effort", "launcher", "model", "display")
+REQUIRED = ("id", "slot", "effort", "launcher", "model")
 OPTIONAL = ("notes",)
 
 
@@ -185,6 +185,55 @@ def find(doc: dict, ident: str) -> Optional[dict]:
         if entry.get("id") == ident:
             return entry
     return None
+
+
+def display(entry: dict) -> str:
+    """The human-readable label for an entry, derived rather than stored.
+
+    A stored label can contradict the fields it describes, which is the defect
+    of issue #10 one level down, so there is no `display` key and no override
+    (ADR-0009). An entry needing a human aside carries `notes`, which is
+    visibly not authoritative.
+
+    Remapped, where the model is not what the slot names:
+
+        Opus/Max → Kimi-K3
+
+    First-party, where the slot and the model say the same thing, collapsed —
+    rendering "Sonnet/Medium → Claude-Sonnet-5" would say it twice:
+
+        Sonnet/Medium
+    """
+    slot = (entry.get("slot") or "").strip()
+    effort = (entry.get("effort") or "").strip()
+    model = (entry.get("model") or "").strip()
+    asked = f"{slot.title()}/{effort.title()}"
+    if not model or _names_the_slot(slot, model):
+        return asked
+    return f"{asked} → {_pretty_model(model)}"
+
+
+def _names_the_slot(slot: str, model: str) -> bool:
+    """True when the model is the one the slot already names.
+
+    A provider-prefixed id (`moonshotai/kimi-k3`) is never first-party, and a
+    first-party id that names a *different* slot than the entry asks for is
+    deliberately not collapsed — that pairing is worth showing, not hiding.
+    """
+    if not slot or "/" in model:
+        return False
+    return slot.lower() in model.lower().replace("_", "-").split("-")
+
+
+def _pretty_model(model: str) -> str:
+    """`moonshotai/kimi-k3` -> `Kimi-K3`. Mechanical: no model-name table.
+
+    Acronyms therefore come out title-cased like any other word (`glm-5.3` ->
+    `Glm-5.3`). Casing them correctly would mean shipping a list of model
+    families, which is exactly the host-specific knowledge this repo keeps out.
+    """
+    tail = model.rsplit("/", 1)[-1]
+    return "-".join(part.title() for part in tail.split("-"))
 
 
 def resolve_launcher(entry: dict) -> str:

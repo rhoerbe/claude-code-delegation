@@ -6,7 +6,7 @@ status: accepted
 
 Starting a participant needs several facts to agree: which launcher runs, which model slot it asks Claude Code for, what effort it requests, and what the roster should then advertise. Asking the human for those facts separately is what issue #10 was filed about — four values retyped per window, and a roster advertising a model slot the session was not running at. The fix is not better advice about keeping them in sync. It is to **remove the second place they can be stated**: the human picks one entry from a list, and every derived value comes from that entry.
 
-The entries live in a JSON manifest at `${XDG_CONFIG_HOME:-~/.config}/ccd/mappings.json`, overridable with `$CCD_MAPPINGS`. Each carries `id`, `slot`, `effort`, `launcher`, `model`, `display` and optional `notes`. A launch therefore reduces to one choice, and the launched session carries one environment variable naming it — with one variable there is structurally nothing to fall out of sync.
+The entries live in a JSON manifest at `${XDG_CONFIG_HOME:-~/.config}/ccd/mappings.json`, overridable with `$CCD_MAPPINGS`. Each carries `id`, `slot`, `effort`, `launcher`, `model` and optional `notes`. A launch therefore reduces to one choice, and the launched session carries one environment variable naming it — with one variable there is structurally nothing to fall out of sync.
 
 Stating slot and effort separately at the prompt was the obvious alternative and is rejected on the same grounds the issue reports: any interface that accepts two independent values accepts two that disagree, and no amount of validation downstream can tell an intended unusual pairing from a typo. A picked name cannot disagree with itself.
 
@@ -28,7 +28,19 @@ An entry's `id` is derived from the model that actually serves the session and i
 
 Deriving from the real model also makes the id survive a re-pointing of the slot. If an entry later asks for `sonnet` instead of `opus` because that is what the backend maps cleanly, `kimi-k3-max` still names the same thing, so anything that recorded the id — a roster entry, a transcript, an issue comment — stays true.
 
-The id is a stable handle for humans and tooling, not a display string; `display` carries the human-readable form and the picker shows the authoritative `slot`, `effort` and `model` beside it, so a `display` that drifts is visible rather than believed.
+The id is a stable handle for humans and tooling, not a label. The label is a separate, derived thing — see below.
+
+## Why the label is derived, not stored
+
+An entry's human-readable label — `Opus/Max → Kimi-K3`, `Sonnet/Medium` — is **computed from `slot`, `effort` and `model`**, by one function every renderer calls. There is no `display` field and no override.
+
+Storing the label was the first design and is rejected: it is free text sitting beside the fields it claims to describe, so an entry can say `effort: "max"` and show "High". That is precisely this record's own defect one level down, and an epic whose purpose is to make a class of mistake impossible should not reintroduce it in the file that fixes it. Deriving makes the disagreement unrepresentable rather than merely discouraged, and one shared function keeps a picker and any later renderer from diverging.
+
+Two shapes come out. Where the model is not the one the slot names, both halves are shown with an arrow. Where they are the same thing — a first-party entry asking for `sonnet` and getting `claude-sonnet-5` — the label collapses to `Sonnet/Medium`, because spelling out `Sonnet/Medium → Claude-Sonnet-5` says it twice. An entry whose first-party model names a *different* slot than it asks for deliberately does not collapse: that pairing is worth showing.
+
+Model names are prettified mechanically — last path segment, title-cased per word — so an acronym comes out like any other word (`glm-5.3-flash` renders `Glm-5.3-Flash`). Correcting that would mean shipping a table of model families, which is the same host-specific knowledge this repo keeps out everywhere else, for a cosmetic gain.
+
+An entry that genuinely needs a human aside carries `notes`. The difference that matters is that `notes` is visibly not the label, so nobody reads it as authoritative.
 
 ## Why the deployment layer produces the file
 
