@@ -19,6 +19,12 @@ set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# The dashboard's `tree` column renders the checkout's directory NAME, not its
+# path, so the $REPO_ROOT rule below never reaches it and a golden recorded in
+# one checkout failed in another whose directory happened to be named
+# differently. Matched inside the table cell rather than bare: a checkout named
+# something short and common would otherwise rewrite unrelated text.
+REPO_NAME="$(basename "$REPO_ROOT")"
 CCD="$REPO_ROOT/ccd"
 GOLDEN_DIR="$SCRIPT_DIR/golden"
 
@@ -54,6 +60,7 @@ trap cleanup EXIT INT TERM
 normalise() {
   sed -e "s#$WORK#<TMP>#g" \
       -e "s#$REPO_ROOT#<REPO>#g" \
+      -e "s#| $REPO_NAME |#| <REPO> |#g" \
       -e "s#$HOME#<HOME>#g" \
       -e "s/pid [0-9][0-9]*/pid <PID>/g" \
       -e "s/\t[0-9][0-9]*\t/\t<PID>\t/g" \

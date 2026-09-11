@@ -5,9 +5,9 @@ exit: 0
 
 | handle | role | model/effort | owner | status | last activity | cost | tree |
 |---|---|---|---|---|---|---|---|
-| `disp` | worker | high | — | unknown | — | — | ccd-py-cli |
-| `w-nopid` | worker | low | — | unknown | — | — | ccd-py-cli |
-| `w1` | worker | low | — | unknown | — | — | ccd-py-cli |
+| `disp` | worker | high | — | unknown | — | — | <REPO> |
+| `w-nopid` | worker | low | — | unknown | — | — | <REPO> |
+| `w1` | worker | low | — | unknown | — | — | <REPO> |
 
 ## Scope: `w1` (worker)
 
