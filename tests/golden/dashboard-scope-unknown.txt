@@ -7,7 +7,7 @@ exit: 0
 |---|---|---|---|---|---|---|---|
 | `disp` | worker | high | — | unknown | — | — | <REPO> |
 | `w-nopid` | worker | low | — | unknown | — | — | <REPO> |
-| `w1` | worker | low | — | unknown | — | — | <REPO> |
+| `w1` | worker | high | — | unknown | — | — | <REPO> |
 
 > **no announced handle 'nobody'** — content not shown.
 --- stderr ---

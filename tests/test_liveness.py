@@ -109,17 +109,41 @@ def test_a_dead_dispatchers_claims_are_released_on_reap(call, broker):
     assert entry_of(call(broker, "roster"), "w3").get("owner") is None
 
 
-def test_reannounce_effort_is_identity_model_is_not(call, broker):
+def test_reannounce_at_a_different_effort_is_refused(call, broker):
     call(broker, "announce", handle="w1", effort="medium", model="claude-sonnet-5")
-
     r = call(broker, "announce", handle="w1", effort="high")
     assert not r.get("ok"), repr(r)
 
-    # A different MODEL at the same effort is NOT refused — model is
-    # optional/carried-forward, not part of the identity check (unlike the
-    # dropped slot, which was).
+
+def test_an_omitted_model_is_not_a_different_session(call, broker):
+    """Model is optional and carried forward, so not repeating it says nothing.
+
+    This is why `model` cannot simply join `effort` in the comparison: a plain
+    re-announce from somewhere that has no manifest to resolve one would read
+    as a hijack.
+    """
+    call(broker, "announce", handle="w1", effort="medium", model="claude-sonnet-5")
+    r = call(broker, "announce", handle="w1", effort="medium")
+    assert r.get("ok"), repr(r)
+    assert entry_of(call(broker, "roster"), "w1").get("model") == "claude-sonnet-5"
+
+
+def test_two_declared_models_that_disagree_are_refused(call, broker):
+    """1.4.0: when BOTH sides declare a model and they differ, that is a
+    different session taking the name — live the moment `ccd launch` starts
+    sending one."""
+    call(broker, "announce", handle="w1", effort="medium", model="claude-sonnet-5")
     r = call(broker, "announce", handle="w1", effort="medium",
              model="moonshotai/kimi-k3")
+    assert not r.get("ok"), repr(r)
+    assert "claude-sonnet-5" in r.get("reason", "")
+    assert entry_of(call(broker, "roster"), "w1").get("model") == "claude-sonnet-5"
+
+
+def test_a_disagreeing_model_is_overridable_with_force(call, broker):
+    call(broker, "announce", handle="w1", effort="medium", model="claude-sonnet-5")
+    r = call(broker, "announce", handle="w1", effort="medium",
+             model="moonshotai/kimi-k3", force="1")
     assert r.get("ok"), repr(r)
     assert entry_of(call(broker, "roster"), "w1").get("model") == "moonshotai/kimi-k3"
 
@@ -200,3 +224,149 @@ def test_ccd_ls_marks_drift_end_to_end(tmp_path, rpc):
         assert cols[-1] == "!", repr(cols)  # observed (high) != declared (medium)
     finally:
         ccd_run("broker", "stop")
+
+
+# ----------------------------------------------------------------------
+# handle identity by pid (1.4.0)
+# ----------------------------------------------------------------------
+# A pid is the one identity signal an impostor cannot simply declare: effort
+# and model are supplied by whoever announces. So when both sides have one it
+# decides, and the declared metadata does not get a vote.
+
+@pytest.fixture
+def live_pid():
+    """A pid that is real and stays running for the duration of a test."""
+    proc = subprocess.Popen(["sleep", "100"])
+    yield proc.pid
+    proc.terminate()
+    proc.wait()
+
+
+def test_a_same_pid_reannounce_is_always_allowed(call, broker, live_pid):
+    """Rule (a): the Esc-interrupted worker reclaiming its own handle.
+
+    Allowed whatever the metadata now says — a session that legitimately
+    changed effort mid-life is still that session, and locking it out of its
+    own identity would be worse than the hijack this guards against.
+    """
+    call(broker, "announce", handle="w1", effort="medium",
+         model="claude-sonnet-5", pid=str(live_pid))
+
+    r = call(broker, "announce", handle="w1", effort="max",
+             model="moonshotai/kimi-k3", pid=str(live_pid))
+    assert r.get("ok"), repr(r)
+    entry = entry_of(call(broker, "roster"), "w1")
+    assert entry.get("effort") == "max"
+    assert entry.get("model") == "moonshotai/kimi-k3"
+
+
+def test_a_different_live_pid_is_refused_even_when_metadata_matches(
+        call, broker, live_pid):
+    """Rule (b): matching metadata is what two workers of the same shape look
+    like, not evidence of one session returning."""
+    other = subprocess.Popen(["sleep", "100"])
+    try:
+        call(broker, "announce", handle="w1", effort="medium",
+             model="claude-sonnet-5", pid=str(live_pid))
+        r = call(broker, "announce", handle="w1", effort="medium",
+                 model="claude-sonnet-5", pid=str(other.pid))
+        assert not r.get("ok"), repr(r)
+        assert f"live pid {live_pid}" in r.get("reason", "")
+        assert entry_of(call(broker, "roster"), "w1").get("pid") == live_pid
+    finally:
+        other.terminate()
+        other.wait()
+
+
+def test_the_hijack_refusal_is_overridable_with_force(call, broker, live_pid):
+    other = subprocess.Popen(["sleep", "100"])
+    try:
+        call(broker, "announce", handle="w1", effort="medium", pid=str(live_pid))
+        r = call(broker, "announce", handle="w1", effort="medium",
+                 pid=str(other.pid), force="1")
+        assert r.get("ok"), repr(r)
+        assert entry_of(call(broker, "roster"), "w1").get("pid") == other.pid
+    finally:
+        other.terminate()
+        other.wait()
+
+
+def test_a_dead_recorded_pid_lets_a_new_session_take_the_name(call, broker):
+    """Rule (c), and the reason it cannot be left to the sweep.
+
+    Reaping happens on a `roster` read ONLY. Without this rule a dead
+    session's handle stays unusable until someone happens to run `ccd ls` —
+    the stale-handle failure #13 is about, in its most confusing form. Note
+    there is deliberately NO roster read before the re-announce here.
+    """
+    dead = spawn_and_kill()
+    call(broker, "announce", handle="w1", effort="medium",
+         model="claude-sonnet-5", pid=str(dead))
+
+    r = call(broker, "announce", handle="w1", effort="max",
+             model="moonshotai/kimi-k3", pid=str(os.getpid()))
+    assert r.get("ok"), repr(r)
+    entry = entry_of(call(broker, "roster"), "w1")
+    assert entry.get("pid") == os.getpid()
+    assert entry.get("effort") == "max"
+
+
+def test_taking_a_dead_handle_overwrites_rather_than_reaping(call, broker):
+    """`roster` stays the only place an entry is reaped: the announce simply
+    assigns over it, so the handle is never absent in between."""
+    dead = spawn_and_kill()
+    call(broker, "announce", handle="w1", effort="medium", pid=str(dead))
+    call(broker, "announce", handle="w1", effort="medium", pid=str(os.getpid()))
+    workers = call(broker, "roster").get("workers", [])
+    assert [w["handle"] for w in workers] == ["w1"]
+
+
+def test_a_pid_less_participant_keeps_the_old_metadata_rules(call, broker):
+    """Rule (d): ADR-0005 has interactive/shell participants first-class, so a
+    pid-less announce is never refused by a rule it cannot satisfy."""
+    call(broker, "announce", handle="w1", effort="medium")
+    assert call(broker, "announce", handle="w1", effort="medium").get("ok")
+    assert not call(broker, "announce", handle="w1", effort="high").get("ok")
+
+
+@pytest.mark.parametrize("who_has_the_pid", ["recorded", "announcing"])
+def test_a_one_sided_pid_falls_back_to_metadata(call, broker, live_pid,
+                                                who_has_the_pid):
+    """Rule (e). The absence of a pid is not evidence about who is announcing,
+    so it decides nothing; the comparison falls back to the declared metadata,
+    exactly as before 1.4.0.
+
+    Refusing the pid-less side instead would make a plain shell — and any
+    backend that is not Claude Code — second-class, which ADR-0005 forbids.
+    """
+    first = {"pid": str(live_pid)} if who_has_the_pid == "recorded" else {}
+    second = {} if who_has_the_pid == "recorded" else {"pid": str(live_pid)}
+
+    # Separate handles: re-announcing the matching one would leave both sides
+    # holding the same pid, which is rule (a) and a different state entirely.
+    call(broker, "announce", handle="w-same", effort="medium", **first)
+    assert call(broker, "announce", handle="w-same", effort="medium",
+                **second).get("ok")
+
+    call(broker, "announce", handle="w-diff", effort="medium", **first)
+    assert not call(broker, "announce", handle="w-diff", effort="high",
+                    **second).get("ok")
+
+
+def test_a_pid_less_announcer_can_still_take_a_live_handle(call, broker, live_pid):
+    """The residual hole, asserted deliberately so it is not "fixed" by accident.
+
+    Closing it would mean refusing an announce for LACKING a pid, which breaks
+    a human repairing a handle by hand from a terminal and every participant on
+    a backend with no $CLAUDE_PID to send (ADR-0005). It is not new either —
+    this is exactly what the check did before 1.4.0, and ADR-0006 puts forgery
+    out of scope. 1.4.0 adds a refusal where there IS evidence of two live
+    processes; it does not promise one where there is none.
+
+    If this test starts failing, the question is whether the hole was closed on
+    purpose with a plan for shells and non-Claude-Code backends — not whether
+    to make it pass again.
+    """
+    call(broker, "announce", handle="w1", effort="medium", pid=str(live_pid))
+    r = call(broker, "announce", handle="w1", effort="medium")
+    assert r.get("ok"), repr(r)

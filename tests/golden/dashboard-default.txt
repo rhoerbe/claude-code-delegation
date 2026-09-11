@@ -7,7 +7,7 @@ exit: 0
 |---|---|---|---|---|---|---|---|
 | `disp` | worker | high | — | unknown | — | — | <REPO> |
 | `w-nopid` | worker | low | — | unknown | — | — | <REPO> |
-| `w1` | worker | low | — | unknown | — | — | <REPO> |
+| `w1` | worker | high | — | unknown | — | — | <REPO> |
 
 _Metadata is system-wide; content is scoped. Pass `--scope <handle>` for one session's current line._
 --- stderr ---

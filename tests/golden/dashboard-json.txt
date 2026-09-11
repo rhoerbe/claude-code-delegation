@@ -62,7 +62,7 @@ exit: 0
       "handle": "w1",
       "role": "worker",
       "model": null,
-      "effort": "low",
+      "effort": "high",
       "owner": null,
       "tree": {
         "cwd": "<REPO>",

@@ -8,7 +8,7 @@ usage: ccd <subcommand> [args]
 
   ccd send <to> <msg> [-f from]
   ccd recv [<handle>] [-t timeout]      ($CCD_HANDLE is the default handle)
-  ccd announce [<handle>] <model> <effort> [--exclusive]
+  ccd announce [<handle>] <model> <effort> [--exclusive] [--force]
   ccd ret [<handle>]
   ccd claim <worker> [<dispatcher>] [--force]
   ccd release <worker> [--force]

@@ -150,3 +150,23 @@ def test_the_repo_root_ccd_is_a_stub_not_a_second_implementation(repo_root):
     assert "from ccd_cli.cli import main" in stub
     assert len([l for l in stub.splitlines()
                 if l.strip() and not l.strip().startswith("#")]) < 20
+
+
+# ----------------------------------------------------------------------
+# every refusal the broker advises must be reachable from the CLI
+# ----------------------------------------------------------------------
+# Three announce refusals say "retire it first, or pass force", and
+# `cmd_announce` used to reject `--force` as a usage error — so the advice
+# named something the CLI could not do. cmd_claim and cmd_release had taken it
+# all along, which is the precedent the fix copied.
+
+@pytest.mark.parametrize("command", ["cmd_announce", "cmd_claim", "cmd_release"])
+def test_every_command_the_broker_tells_to_force_can_send_force(repo_root, command):
+    assert "force" in _wire_fields(_function(repo_root, command))
+
+
+def test_the_usage_text_offers_force_wherever_the_cli_sends_it(repo_root):
+    """A flag the CLI accepts but never advertises is only half-reachable."""
+    usage = [l for l in (repo_root / "ccd_cli" / "cli.py").read_text(
+        encoding="utf-8").splitlines() if l.strip().startswith("ccd announce")]
+    assert usage and all("--force" in l for l in usage), usage

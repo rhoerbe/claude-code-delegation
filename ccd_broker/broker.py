@@ -29,8 +29,8 @@ Wire model — one logical request per connection, line-delimited JSON:
 | recv     | {handle, timeout?}      | {ok:true, from, msg} / {ok:false,          |
 |          |                         |  reason:"timeout"}          *blocking*     |
 | announce | {handle, effort,        | {ok:true} / {ok:false} if the handle is    |
-|          |  model?, pid?, mapping?,|  live with a different effort, or          |
-|          |  cwd?, session?,        |  live at all when exclusive                |
+|          |  model?, pid?, mapping?,|  held by another live session, or live at  |
+|          |  cwd?, session?,        |  all when exclusive — see "Handle identity"|
 |          |  exclusive?, force?}    |                                             |
 | retire   | {handle}                | {ok:true}  (releases anything it claimed)  |
 | claim    | {handle, owner, force?} | {ok:true} / {ok:false} if already claimed  |
@@ -68,6 +68,17 @@ and `announce --exclusive` then refuses to reuse the name — which is how a
 `w1` outlived its session by hours. An entry with `pid: null` (a plain-shell
 participant, never a traceable process) is never reaped: `alive` reads
 `null` for it, not `false`, because there is nothing to check.
+
+Handle identity (1.4.0): a re-announce of a live handle is checked against
+what the broker already holds. When BOTH sides declare a `pid` that is the
+comparison — same pid re-announces itself freely, a different pid that is
+still running is refused as a hijack even when the declared metadata matches,
+and a different pid whose recorded process is gone simply takes the name
+(the assignment overwrites; nothing is reaped outside `roster`, which stays
+the only reaping path). When either side has no pid it falls back to the
+declared metadata: a different `effort`, or a different `model` where both
+sides declared one. A pid-less participant is never refused by a rule it
+cannot satisfy — ADR-0005 has it first-class. `force` bypasses all of it.
 
 Drift (#13) is never computed or stored here: the broker holds no transcript
 access (ADR-0003) and no opinion about what actually ran. `ccd ls` computes
@@ -112,7 +123,7 @@ from typing import Any, Callable, Optional, Protocol, runtime_checkable
 # not a slot alias — "slot" was tried and dropped before release, see the
 # module docstring's Vocabulary section); roster reads lazily reap a dead
 # pid (claude-code-delegation#13).
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 
 #: `recv` timeout when the client does not supply one (24h — a parked worker).
 DEFAULT_RECV_TIMEOUT = 86400.0
@@ -254,6 +265,93 @@ class Broker:
             return _err("'timeout' must be a number of seconds")
         return self._recv(handle, timeout, ctx)
 
+    @staticmethod
+    def _identity_refusal(handle, live: dict, effort, model, pid) -> Optional[dict]:
+        """Is this re-announce a different session taking a live handle?
+
+        Returns an error reply to refuse with, or None to allow. `force`
+        bypasses this entirely — it is checked by the caller — which is what
+        keeps every refusal here recoverable.
+
+        A **pid is the strongest identity available** and is preferred when both
+        sides have one, because it is the only signal an impostor cannot simply
+        declare: effort and model are supplied by whoever is announcing, so
+        matching metadata is evidence of two workers configured alike, not of
+        one session returning.
+
+        When either side has no pid the comparison falls back to the declared
+        metadata, unchanged from before. That asymmetry is deliberate: a
+        pid-less announce is the normal shape for a plain shell and for any
+        backend that is not Claude Code, and ADR-0005 has those participants
+        first-class. A rule they cannot satisfy would make them second-class
+        and is not evidence of anything — the absence of a pid says nothing
+        about who is announcing.
+
+        **The residual hole is deliberate; do not "fix" it.** A pid-less
+        announcer can still take a handle held by a live pid-holding session
+        when the declared effort matches. Closing that would mean refusing an
+        announce for *lacking* a pid, which breaks the ordinary case of a human
+        repairing a handle by hand from a terminal, and breaks every
+        participant on a backend that has no `$CLAUDE_PID` to send. It is also
+        not a new hole: it is exactly what this check did before 1.4.0, and
+        ADR-0006 already puts forgery out of scope — an impostor announcing
+        identical metadata is indistinguishable from the real thing and always
+        will be. What 1.4.0 adds is a refusal where there IS evidence (two
+        different live processes); it does not promise one where there is none.
+        """
+        live_pid = live.get("pid")
+
+        if live_pid is not None and pid is not None:
+            # Same process re-announcing its own handle — the Esc-interrupted
+            # worker reclaiming itself. Always allowed, whatever the declared
+            # metadata now says: the process identity settles it, and a
+            # session that legitimately changed effort mid-life is still that
+            # session.
+            if live_pid == pid:
+                return None
+            # A different pid, and the recorded one is still running: two live
+            # processes want one name. This is the hijack the guard exists for,
+            # and it is refused even when effort and model match, because
+            # matching metadata is exactly what two workers of the same shape
+            # look like — the collision a launcher's ordinal suffix exists for.
+            if _proc_exists(live_pid):
+                return _err(
+                    f"handle '{handle}' is held by live pid {live_pid}; "
+                    f"retire it first, or pass force"
+                )
+            # The recorded process is gone. The name is free, so the announce
+            # takes it and the assignment below overwrites the entry. That is
+            # not a second reaping path — nothing is deleted here; `roster`
+            # remains the only place an entry is reaped. It matters because the
+            # sweep runs on a `roster` read ONLY, so without this a dead
+            # session's handle stays unusable until someone happens to run
+            # `ccd ls` — which is the stale-handle failure #13 is about,
+            # wearing its most confusing face.
+            return None
+
+        # Neither side can prove process identity, so fall back to what was
+        # declared. A *different* effort means a different session took the
+        # name, which is the accident worth catching. Forgery stays out of
+        # scope (ADR-0006): an impostor announcing identical metadata is
+        # indistinguishable from the real thing and always will be.
+        if live["effort"] != effort:
+            return _err(
+                f"handle '{handle}' is already announced at effort "
+                f"{live['effort']}; retire it first, or pass force"
+            )
+        # `model` is compared only when BOTH sides declare one. It is optional
+        # and carried forward when omitted, so an announce that simply does not
+        # repeat it must not read as a different session — the same reason
+        # cwd/session are not part of this check. Two *declared* models that
+        # disagree, though, is precisely "a different session took the name".
+        live_model = live.get("model")
+        if live_model is not None and model is not None and live_model != model:
+            return _err(
+                f"handle '{handle}' is already announced as model "
+                f"{live_model}; retire it first, or pass force"
+            )
+        return None
+
     def _m_announce(self, args: dict, ctx: Optional[ClientContext]) -> Optional[dict]:
         handle = args.get("handle")
         if not _is_handle(handle):
@@ -307,24 +405,9 @@ class Broker:
                     f"(effort {live['effort']})"
                 )
             if live is not None and not force:
-                # Idempotent re-announce is the common case and must keep
-                # working: a session Esc-interrupted mid-park re-announces the
-                # same handle at the same effort, and locking it out of its
-                # own identity would be worse than the hijack this guards
-                # against. A *different* effort means a different session took
-                # the name, which is the accident worth catching. Forgery is
-                # out of scope (ADR-0006) — an impostor announcing an
-                # identical effort is indistinguishable from the real thing
-                # and always will be. `model` is NOT part of this check: it is
-                # optional and carried forward when omitted (below), so an
-                # announce that simply doesn't repeat it must not read as a
-                # different session — the same reason cwd/session aren't part
-                # of this check either.
-                if live["effort"] != effort:
-                    return _err(
-                        f"handle '{handle}' is already announced at effort "
-                        f"{live['effort']}; retire it first, or pass force"
-                    )
+                refusal = self._identity_refusal(handle, live, effort, model, pid)
+                if refusal is not None:
+                    return refusal
             self._roster[handle] = {
                 "handle": handle,
                 "effort": effort,

@@ -3,4 +3,4 @@ exit: 2
 --- stdout ---
 
 --- stderr ---
-usage: ccd announce [<handle>] <model> <effort>  ($CCD_HANDLE is the default handle)
+usage: ccd announce [<handle>] <model> <effort> [--exclusive] [--force]  ($CCD_HANDLE is the default handle)
