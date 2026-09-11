@@ -23,7 +23,7 @@ wire protocol, and the rationale for every decision below) and
 
 No host-specific paths, credentials, handles, or launcher names live here.
 This is the generic, public delegation model only. Wiring it onto any
-particular machine (which launcher starts a worker, which model/effort tier
+particular machine (which launcher starts a worker, which model/effort slot
 it gets, systemd units, ansible roles, personal handles) is a deployment
 concern that belongs outside this repo.
 
@@ -31,17 +31,23 @@ The author's own deployment lives in a separate private, ansible-based
 layer, and this is roughly the shape a comparable one takes — useful as a
 sketch if you are building your own, since nothing here depends on it:
 
-- a role that vendors `ccd_broker/` + the `ccd` CLI onto a host and runs the
-  broker as a systemd `--user` unit, with `CCD_SOCKET` pinned to an explicit
-  path rather than left to `${XDG_RUNTIME_DIR:-/tmp}` (a Claude Code Bash-tool
-  subshell does not reliably inherit `XDG_RUNTIME_DIR`, and the fallback
-  quietly starts a *second* broker that neither side reports as an error);
+- a role that installs a copy of `ccd_broker/` + the `ccd` CLI onto a host and
+  runs the broker as a systemd `--user` unit, with `CCD_SOCKET` pinned to an
+  explicit path rather than left to `${XDG_RUNTIME_DIR:-/tmp}` (a Claude Code
+  Bash-tool subshell does not reliably inherit `XDG_RUNTIME_DIR`, and the
+  fallback quietly starts a *second* broker that neither side reports as an
+  error);
 - a role that installs `skills/ccd-worker.md` as
   `~/.claude/skills/ccd-worker/SKILL.md` — the loader scans for a directory
   containing `SKILL.md`, and silently ignores a flat `.md` file;
-- a thin launch wrapper that exports `CCD_HANDLE`/`CCD_MODEL`/`CCD_EFFORT`
-  and then execs whichever backend launcher was named, so backends stay
-  orthogonal to ccd, plus a local naming convention for handles.
+- a thin launch wrapper that derives the handle once, maps one model-slot name
+  onto *both* the `CCD_MODEL`/`CCD_EFFORT` it exports and the
+  `--model`/`--effort` it passes through, reserves the handle with `ccd
+  announce --exclusive`, and then execs whichever backend launcher was named,
+  so backends stay orthogonal to ccd. Deriving both pairs from one input is
+  the point: hand-matching them is how a roster ends up advertising a slot the
+  session is not running at (issue #10). See [`USAGE.md`](USAGE.md), *What a
+  launch wrapper should do for you*.
 
 Two deployment findings worth carrying over wherever you wire this up: a
 handle must be unique among *live* sessions, since two sessions sharing one
@@ -90,7 +96,7 @@ ccd broker stop
 | `CCD_HANDLE` | `ccd recv`/`announce`/`ret` | *(none — required if `<handle>` isn't passed positionally)* | Default handle for `recv`/`announce`/`ret` so a worker's skill/script doesn't have to hardcode it. |
 | `CCD_TRANSCRIPT_ROOT` | `ccd dashboard` | `${CLAUDE_CONFIG_DIR:-~/.claude}/projects` | Where Claude Code keeps per-project transcript directories. The dashboard is the one component that reads them (ADR-0008) — the broker and the rest of the CLI stay backend-agnostic and read no Claude-internal state at all. |
 | `CLAUDE_CODE_SESSION_ID` | `ccd announce` | *(set by Claude Code inside a session; empty elsewhere)* | Passed through to the broker so the dashboard can find that session's transcript. Announcing from a plain shell sends nothing and leaves whatever the session already reported. |
-| `CCD_MODEL`, `CCD_EFFORT` | worker skill (`skills/ccd-worker.md`) convention, not read by `ccd` itself | — | Passed as the `model`/`effort` args to `ccd announce`, so the roster (`ccd ls`) shows other participants which capability tier each handle carries. Set by whatever launches the session. |
+| `CCD_MODEL`, `CCD_EFFORT` | worker skill (`skills/ccd-worker.md`) convention, not read by `ccd` itself | — | Passed as the `model`/`effort` args to `ccd announce`, so the roster (`ccd ls`) shows other participants which model slot each handle carries. Nothing reads them back off the running session, so the `ccd-worker` skill compares them with what is actually running and warns on a mismatch. Set by whatever launches the session. |
 
 The broker itself takes no flags or config file — `$CCD_SOCKET` is its only
 configuration surface (`ccd-broker -h` / `python3 -m ccd_broker -h` for the
@@ -218,9 +224,10 @@ Full protocol semantics (wire format, blocking/dequeue-on-ack, the
 ## Worker/dispatcher skill and tests
 
 - [`skills/ccd-worker.md`](skills/ccd-worker.md) — the Claude Code skill a
-  worker (or a dispatcher, same shape) loads: announce on start, `ccd recv`
-  as the last tool call every turn, reply-then-recv-again, retire on exit,
-  and the Esc-interrupt note above.
+  worker (or a dispatcher, same shape) loads: announce on start, check the
+  announced slot against what is actually running, `ccd recv` as the last tool
+  call every turn, reply-then-recv-again, retire on exit, and the
+  Esc-interrupt note above.
 - [`tests/ccd_smoke.sh`](tests/ccd_smoke.sh) — an end-to-end smoke test
   against a private, throwaway broker instance. Run it with
   `tests/ccd_smoke.sh`.
