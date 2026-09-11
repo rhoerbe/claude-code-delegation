@@ -7,6 +7,13 @@ same shape as test_affiliation.py. The drift section also runs `ccd ls`
 end to end as a subprocess against a real broker and a synthetic transcript,
 the same way test_dashboard.py's CLI section drives `ccd dashboard`.
 
+Note: this schema went through two passes before anything shipped. The first
+pass added a `slot` field (fable/opus/sonnet/haiku) alongside the renamed
+`model`; a live probe done right after settled that naming a model directly
+reaches it exactly as well as routing through a slot alias, so `slot` was
+dropped again before release. What ships is `effort`, `model`, `pid`,
+`mapping` — no `slot`.
+
 Run: tests/test_liveness.py
 """
 from __future__ import annotations
@@ -62,22 +69,22 @@ def main() -> int:
 
 
 def run(tmp: Path) -> int:
-    print("announce carries the honest field names (#13):")
+    print("announce carries the honest field names (#13), no slot:")
     b = Broker()
-    call(b, "announce", handle="w1", slot="sonnet", effort="medium",
+    call(b, "announce", handle="w1", effort="medium",
          model="claude-sonnet-5", pid=os.getpid(), mapping="kimi-k3-max")
     entry = entry_of(call(b, "roster"), "w1")
-    check("slot is the closed vocabulary, not the resolved id",
-          entry.get("slot") == "sonnet", repr(entry))
+    check("no slot field on the roster at all", "slot" not in entry, repr(entry))
     check("model is the resolved id", entry.get("model") == "claude-sonnet-5",
           repr(entry))
+    check("effort is carried", entry.get("effort") == "medium", repr(entry))
     check("pid is carried", entry.get("pid") == os.getpid(), repr(entry))
     check("mapping is carried", entry.get("mapping") == "kimi-k3-max", repr(entry))
     check("this process's own pid reads alive", entry.get("alive") is True,
           repr(entry))
 
     print("\nmodel/mapping are carried forward when omitted, pid is NOT:")
-    call(b, "announce", handle="w1", slot="sonnet", effort="medium")
+    call(b, "announce", handle="w1", effort="medium")
     entry = entry_of(call(b, "roster"), "w1")
     check("model survives an announce that does not repeat it",
           entry.get("model") == "claude-sonnet-5", repr(entry))
@@ -88,7 +95,7 @@ def run(tmp: Path) -> int:
           entry.get("alive") is None, repr(entry))
 
     print("\na handle with no pid at all is never reaped (a plain shell):")
-    call(b, "announce", handle="shell", slot="haiku", effort="low")
+    call(b, "announce", handle="shell", effort="low")
     for i in range(3):
         reply = call(b, "roster")
         entry = entry_of(reply, "shell")
@@ -101,7 +108,7 @@ def run(tmp: Path) -> int:
     dead_pid = spawn_and_kill()
     check("the spawned pid is actually gone",
           not os.path.exists(f"/proc/{dead_pid}"), dead_pid)
-    call(b, "announce", handle="w2", slot="opus", effort="high", pid=dead_pid)
+    call(b, "announce", handle="w2", effort="high", pid=dead_pid)
     reply = call(b, "roster")
     entry = entry_of(reply, "w2")
     check("the read that discovers it shows alive=false",
@@ -111,12 +118,12 @@ def run(tmp: Path) -> int:
     check("the NEXT read no longer carries it",
           not entry_of(reply2, "w2"), repr(reply2))
     check("--exclusive can reuse the name now that it is reaped",
-          call(b, "announce", handle="w2", slot="opus", effort="high",
+          call(b, "announce", handle="w2", effort="high",
                exclusive=True).get("ok"))
 
     print("\na live pid reads alive=true and is not reaped:")
     b = Broker()
-    call(b, "announce", handle="me", slot="sonnet", effort="medium", pid=os.getpid())
+    call(b, "announce", handle="me", effort="medium", pid=os.getpid())
     reply = call(b, "roster")
     entry = entry_of(reply, "me")
     check("alive is true for this running process", entry.get("alive") is True,
@@ -127,8 +134,8 @@ def run(tmp: Path) -> int:
     print("\na dead dispatcher's claims are released on reap, like retire:")
     b = Broker()
     dead_pid = spawn_and_kill()
-    call(b, "announce", handle="disp", slot="opus", effort="high", pid=dead_pid)
-    call(b, "announce", handle="w3", slot="sonnet", effort="medium")
+    call(b, "announce", handle="disp", effort="high", pid=dead_pid)
+    call(b, "announce", handle="w3", effort="medium")
     call(b, "claim", handle="w3", owner="disp")
     check("w3 is claimed before the reap",
           entry_of(call(b, "roster"), "w3").get("owner") == "disp")
@@ -136,23 +143,28 @@ def run(tmp: Path) -> int:
     check("w3's claim is released once its dispatcher is reaped",
           entry_of(call(b, "roster"), "w3").get("owner") is None)
 
-    print("\nre-announcing a live handle at a different slot is still refused:")
+    print("\nre-announcing a live handle: effort is the identity, model is not:")
     b = Broker()
-    call(b, "announce", handle="w1", slot="sonnet", effort="medium")
-    r = call(b, "announce", handle="w1", slot="opus", effort="medium")
-    check("different slot is refused", not r.get("ok"), repr(r))
-    r = call(b, "announce", handle="w1", slot="sonnet", effort="high")
-    check("different effort is refused too", not r.get("ok"), repr(r))
+    call(b, "announce", handle="w1", effort="medium", model="claude-sonnet-5")
+    r = call(b, "announce", handle="w1", effort="high")
+    check("a different effort is refused", not r.get("ok"), repr(r))
+    r = call(b, "announce", handle="w1", effort="medium",
+             model="moonshotai/kimi-k3")
+    check("a different MODEL at the same effort is NOT refused — model is "
+          "optional/carried-forward, not part of the identity check "
+          "(unlike the dropped slot, which was)",
+          r.get("ok"), repr(r))
+    check("...and the new model actually lands",
+          entry_of(call(b, "roster"), "w1").get("model") == "moonshotai/kimi-k3")
 
     print("\nan invalid/empty pid is treated as no pid, not an error:")
     b = Broker()
     check("empty string pid is accepted as absent",
-          call(b, "announce", handle="w1", slot="sonnet", effort="medium",
-               pid="").get("ok"))
+          call(b, "announce", handle="w1", effort="medium", pid="").get("ok"))
     check("and reads as alive=None",
           entry_of(call(b, "roster"), "w1").get("alive") is None)
     check("garbage pid is accepted as absent, not a crash",
-          call(b, "announce", handle="w4", slot="sonnet", effort="medium",
+          call(b, "announce", handle="w4", effort="medium",
                pid="not-a-pid").get("ok"))
     check("...and reads as alive=None too",
           entry_of(call(b, "roster"), "w4").get("alive") is None)
@@ -200,7 +212,7 @@ def run(tmp: Path) -> int:
              "s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)\n"
              "s.connect(sys.argv[1])\n"
              "s.sendall((json.dumps({'method':'announce','args':{"
-             "'handle':'drifted','slot':'sonnet','effort':'medium',"
+             "'handle':'drifted','effort':'medium',"
              "'cwd':'/work/drift','session':'s1'}})+chr(10)).encode())\n"
              "print(s.recv(4096).decode())\n",
              str(sock)],
@@ -219,9 +231,10 @@ def run(tmp: Path) -> int:
               all(not l.startswith("HANDLE\t") for l in lines), repr(lines[:1]))
         row = next((l for l in lines if l.startswith("drifted\t")), "")
         cols = row.split("\t")
-        check("the row has slot/effort/owner/model/pid/status/drift columns",
-              len(cols) == 8, repr(cols))
-        check("declared effort is shown (medium)", cols[2] == "medium", repr(cols))
+        # handle, effort, owner, model, pid, status, drift — no slot column.
+        check("the row has effort/owner/model/pid/status/drift columns "
+              "(no slot)", len(cols) == 7, repr(cols))
+        check("declared effort is shown (medium)", cols[1] == "medium", repr(cols))
         check("drift is marked '!' — observed (high) != declared (medium)",
               cols[-1] == "!", repr(cols))
     finally:

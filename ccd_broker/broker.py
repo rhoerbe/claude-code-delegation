@@ -10,7 +10,7 @@ State (all in-memory, no persistence — a broker restart means empty queues and
 an empty roster; workers re-`announce` on their next start):
 
     queues:  <handle> -> [msg, msg, ...]     FIFO, one deque per handle
-    roster:  <handle> -> {slot, effort, model, pid, mapping,
+    roster:  <handle> -> {effort, model, pid, mapping,
                           owner, cwd, session}
                                              owner=None until claimed;
                                              cwd/session None unless announced;
@@ -28,27 +28,34 @@ Wire model — one logical request per connection, line-delimited JSON:
 | send     | {to, msg, from?}        | {ok:true, id}                              |
 | recv     | {handle, timeout?}      | {ok:true, from, msg} / {ok:false,          |
 |          |                         |  reason:"timeout"}          *blocking*     |
-| announce | {handle, slot, effort,  | {ok:true} / {ok:false} if the handle is    |
-|          |  model?, pid?, mapping?,|  live with a different slot/effort, or     |
+| announce | {handle, effort,        | {ok:true} / {ok:false} if the handle is    |
+|          |  model?, pid?, mapping?,|  live with a different effort, or          |
 |          |  cwd?, session?,        |  live at all when exclusive                |
 |          |  exclusive?, force?}    |                                             |
 | retire   | {handle}                | {ok:true}  (releases anything it claimed)  |
 | claim    | {handle, owner, force?} | {ok:true} / {ok:false} if already claimed  |
 | release  | {handle, owner?}        | {ok:true}                                  |
-| roster   | {}                      | {ok:true, workers:[{handle,slot,effort,    |
+| roster   | {}                      | {ok:true, workers:[{handle,effort,         |
 |          |                         |  model,pid,mapping,alive,owner,cwd,        |
 |          |                         |  session}]}                                |
 | ping     | {}                      | {ok:true, version, started_at}             |
 
-Vocabulary (claude-code-delegation#13, replacing the old overloaded "model"):
-`slot` is exactly one of `fable`/`opus`/`sonnet`/`haiku` — closed, and never
-carrying an effort of its own. `effort` is its own field, exactly one value.
-`model` is the *resolved* model id (e.g. `claude-sonnet-5`, or an OpenRouter
-slug) — what a bare "model" used to smuggle before this version, conflating a
-slot name with the thing it maps to. The broker validates neither `slot` nor
-`model` — that happens where the manifest is read (phase 2) — it only stores
-what it is told. `mapping` is a manifest entry id (e.g. `kimi-k3-max`),
-optional and empty for a hand-launched session.
+Vocabulary (claude-code-delegation#13): "model slot" (`fable`/`opus`/`sonnet`/
+`haiku`) is a naming convention used ABOVE this layer — the manifest/launcher
+that maps a slot to a concrete model — but the broker does not store it as a
+field. It did, briefly, in this same 1.3.0 (never released): a live probe
+settled it after — passing a full model id straight to `--model` reached the
+model exactly as well as naming a slot Claude Code resolves through
+`ANTHROPIC_DEFAULT_*_MODEL` (identical catalog warning, identical assumed
+context window). Once a launch already names its model, a roster `slot` would
+hold either an alias whose resolved value is already in `model` (a
+first-party launch) or nothing meaningful (a manifest launch, which names a
+`mapping` entry instead) — vestigial either way, so it was dropped before
+anything shipped. What the broker actually carries: `effort` (required, one
+value) and `model` (optional — the *resolved* id, e.g. `claude-sonnet-5` or an
+OpenRouter slug; typically still empty, since nothing upstream of phase 2/4's
+manifest and launcher work can supply it yet). Neither is validated by the
+broker — that happens where the manifest is read (phase 2).
 
 Liveness and reaping (#13): `pid` is the announcing session's own top-level
 process id (`$CLAUDE_PID` inside Claude Code). A `roster` read lazily reaps —
@@ -65,8 +72,8 @@ participant, never a traceable process) is never reaped: `alive` reads
 Drift (#13) is never computed or stored here: the broker holds no transcript
 access (ADR-0003) and no opinion about what actually ran. `ccd ls` computes
 it itself by reading the same transcript the dashboard does (ADR-0008) and
-comparing to the declared `slot`/`effort`/`model` — the roster is never
-mutated by what it finds there.
+comparing to the declared `effort`/`model` — the roster is never mutated by
+what it finds there.
 
 Affiliation (ADR-0007): a worker announces *unowned*; a dispatcher `claim`s it,
 exclusively and atomically. The broker then refuses a **dispatcher's** `send` to
@@ -101,8 +108,10 @@ import time
 from collections import deque
 from typing import Any, Callable, Optional, Protocol, runtime_checkable
 
-# 1.3: slot/model/pid/mapping replace the overloaded "model"; roster reads
-# lazily reap a dead pid (claude-code-delegation#13).
+# 1.3: model/pid/mapping replace the overloaded "model" (a resolved id now,
+# not a slot alias — "slot" was tried and dropped before release, see the
+# module docstring's Vocabulary section); roster reads lazily reap a dead
+# pid (claude-code-delegation#13).
 VERSION = "1.3.0"
 
 #: `recv` timeout when the client does not supply one (24h — a parked worker).
@@ -249,11 +258,11 @@ class Broker:
         handle = args.get("handle")
         if not _is_handle(handle):
             return _err("announce requires a non-empty string 'handle'")
-        # `slot` is the closed vocabulary (fable/opus/sonnet/haiku), never
-        # carrying an effort of its own — see the module docstring's
-        # Vocabulary section (#13). Required, like `effort`: these two are
-        # the declared identity a re-announce is checked against below.
-        slot = _as_text(args.get("slot"))
+        # Required — the declared identity a re-announce is checked against
+        # below. No `slot` alongside it: dropped from this schema before
+        # anything shipped (module docstring's Vocabulary section, #13) once
+        # a live probe showed naming a model directly reaches it exactly as
+        # well as routing through a slot alias.
         effort = _as_text(args.get("effort"))
         # The resolved model id (e.g. claude-sonnet-5, or an OpenRouter
         # slug) and which manifest entry produced this launch. Both optional
@@ -283,8 +292,8 @@ class Broker:
         force = bool(args.get("force"))
         # `exclusive` is for a caller that KNOWS it is starting a new session
         # — a launcher reserving a name before exec. For it, an identical
-        # slot/effort is not the idempotent re-announce below but a genuine
-        # collision: two workers of the same model slot on the same issue and
+        # effort is not the idempotent re-announce below but a genuine
+        # collision: two workers of the same effort on the same issue and
         # phase is precisely the case the launcher's ordinal suffix exists for,
         # and the broker cannot tell the two apart on its own (there is no
         # session identity). Announcing without it stays idempotent, so an
@@ -295,27 +304,29 @@ class Broker:
             if live is not None and exclusive and not force:
                 return _err(
                     f"handle '{handle}' is already announced "
-                    f"({live['slot']}/{live['effort']})"
+                    f"(effort {live['effort']})"
                 )
             if live is not None and not force:
                 # Idempotent re-announce is the common case and must keep
                 # working: a session Esc-interrupted mid-park re-announces the
-                # same handle at the same model slot, and locking it out of
-                # its own identity would be worse than the hijack this guards
-                # against. A *different* slot means a different session took
+                # same handle at the same effort, and locking it out of its
+                # own identity would be worse than the hijack this guards
+                # against. A *different* effort means a different session took
                 # the name, which is the accident worth catching. Forgery is
                 # out of scope (ADR-0006) — an impostor announcing an
-                # identical slot is indistinguishable from the real thing and
-                # always will be.
-                if live["slot"] != slot or live["effort"] != effort:
+                # identical effort is indistinguishable from the real thing
+                # and always will be. `model` is NOT part of this check: it is
+                # optional and carried forward when omitted (below), so an
+                # announce that simply doesn't repeat it must not read as a
+                # different session — the same reason cwd/session aren't part
+                # of this check either.
+                if live["effort"] != effort:
                     return _err(
-                        f"handle '{handle}' is already announced as "
-                        f"{live['slot']}/{live['effort']}; retire it first, "
-                        f"or pass force"
+                        f"handle '{handle}' is already announced at effort "
+                        f"{live['effort']}; retire it first, or pass force"
                     )
             self._roster[handle] = {
                 "handle": handle,
-                "slot": slot,
                 "effort": effort,
                 "model": model if model is not None else (live.get("model") if live else None),
                 "pid": pid,

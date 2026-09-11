@@ -40,7 +40,7 @@ def owner_of(b: Broker, handle: str):
 def fresh(*workers: str) -> Broker:
     b = Broker()
     for w in workers:
-        call(b, "announce", handle=w, slot="sonnet", effort="medium")
+        call(b, "announce", handle=w, effort="medium")
     return b
 
 
@@ -97,7 +97,7 @@ def main() -> int:
     print("\nsend enforcement:")
     b = fresh("w1")
     call(b, "claim", handle="w1", owner="dispA")
-    call(b, "announce", handle="w2", slot="sonnet", effort="medium")
+    call(b, "announce", handle="w2", effort="medium")
     call(b, "claim", handle="w2", owner="dispB")     # makes dispB a dispatcher
     check("the owning dispatcher may send",
           call(b, "send", to="w1", msg="task", **{"from": "dispA"}).get("ok"))
@@ -108,7 +108,7 @@ def main() -> int:
     check("a sender claiming nothing may always send",
           call(b, "send", to="w1", msg="poke", **{"from": "some-worker"}).get("ok"))
     check("an unclaimed worker is open to anyone",
-          call(b, "announce", handle="w3", slot="haiku", effort="low").get("ok")
+          call(b, "announce", handle="w3", effort="low").get("ok")
           and call(b, "send", to="w3", msg="x", **{"from": "dispB"}).get("ok"))
 
     print("\nrelease and retire-cascade:")
@@ -119,7 +119,7 @@ def main() -> int:
           and owner_of(b, "w1") is None)
     check("the other is still held", owner_of(b, "w2") == "dispA")
     call(b, "claim", handle="w1", owner="dispA")
-    call(b, "announce", handle="dispA", slot="opus", effort="high")
+    call(b, "announce", handle="dispA", effort="high")
     call(b, "retire", handle="dispA")
     check("retiring a dispatcher frees both its workers",
           owner_of(b, "w1") is None and owner_of(b, "w2") is None)
@@ -127,27 +127,25 @@ def main() -> int:
     print("\nannounce no longer silently overwrites:")
     b = fresh("w1")
     call(b, "claim", handle="w1", owner="dispA")
-    check("same model slot re-announce succeeds (Esc-interrupt recovery)",
-          call(b, "announce", handle="w1", slot="sonnet", effort="medium").get("ok"))
+    check("same effort re-announce succeeds (Esc-interrupt recovery)",
+          call(b, "announce", handle="w1", effort="medium").get("ok"))
     check("and preserves the claim", owner_of(b, "w1") == "dispA")
-    r = call(b, "announce", handle="w1", slot="opus", effort="high")
-    check("different model slot is refused", not r.get("ok"), repr(r))
+    r = call(b, "announce", handle="w1", effort="high")
+    check("different effort is refused", not r.get("ok"), repr(r))
     # A launcher reserving a name for a NEW session must be told no even when
-    # the slot matches: two workers of the same slot on one issue/phase is
-    # exactly what the ordinal suffix exists for, and the broker cannot tell
-    # that from an Esc-interrupted worker reclaiming its own handle.
-    r = call(b, "announce", handle="w1", slot="sonnet", effort="medium",
-             exclusive=True)
-    check("exclusive reservation refuses an identical model slot",
+    # the effort matches: two workers of the same effort on one issue/phase
+    # is exactly what the ordinal suffix exists for, and the broker cannot
+    # tell that from an Esc-interrupted worker reclaiming its own handle.
+    r = call(b, "announce", handle="w1", effort="medium", exclusive=True)
+    check("exclusive reservation refuses an identical effort",
           not r.get("ok"), repr(r))
     check("exclusive on a free handle succeeds",
-          call(b, "announce", handle="fresh", slot="sonnet", effort="medium",
+          call(b, "announce", handle="fresh", effort="medium",
                exclusive=True).get("ok"))
     check("plain re-announce is still idempotent after that",
-          call(b, "announce", handle="fresh", slot="sonnet",
-               effort="medium").get("ok"))
+          call(b, "announce", handle="fresh", effort="medium").get("ok"))
     check("force overrides",
-          call(b, "announce", handle="w1", slot="opus", effort="high",
+          call(b, "announce", handle="w1", effort="high",
                force=True).get("ok"))
 
     print("\nroster and ping:")
