@@ -36,7 +36,7 @@ Code, so the machinery built to cope with it is moot.)*
   than direct stream piping.
 * **Configurable Invocation:** The orchestrating agent may choose from a
   predefined set of invocations with parameters: invocation script (launcher),
-  model tier, and effort.
+  model, and effort.
 
 *(Removed: "Rate-Limit Resilience" — the autonomous spend-limit resume
 requirement. Moot; see §1.)*
