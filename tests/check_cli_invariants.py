@@ -81,6 +81,10 @@ def main() -> int:
             for node in ast.walk(announce)))
 
     print("\nretired vocabulary stays retired:")
+    # This file is necessarily the one place the retired words appear, because
+    # it is the thing forbidding them — it scans ccd_cli/ and ./ccd, never
+    # itself. A repo-wide grep therefore returns these two literals and
+    # nothing else; that is the expected count, not a leak.
     for path in sorted((CLI.parent).glob("*.py")) + [
             Path(__file__).resolve().parent.parent / "ccd"]:
         text = path.read_text(encoding="utf-8").lower()

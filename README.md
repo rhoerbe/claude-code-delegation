@@ -70,27 +70,35 @@ what's intentionally deferred.
 
 ## Install
 
-There is no packaging yet (no `pyproject.toml`/`setup.py`) — this is a clone
-and run repo:
+One distribution, three console scripts:
 
 ```bash
-git clone <this-repo> ~/ccd   # or wherever
-export PATH="$HOME/ccd:$PATH"           # puts the `ccd` CLI on PATH
-export PYTHONPATH="$HOME/ccd:$PYTHONPATH"   # so `python3 -m ccd_broker` resolves
+uv tool install git+<this-repo>@<tag>    # ccd, ccd-broker, ccd-dashboard
 ```
 
-Requires Python 3.9+ (stdlib only, no third-party dependencies) and a Linux
-box with `AF_UNIX`/`SO_PEERCRED` support. `bash` is required for the `ccd`
-CLI itself.
+Installing a copy of the files onto a host by hand is what this replaces. A
+packaged install carries its own contents and cannot be half a version — the
+file-copy approach once put a wrapper on a host from a checkout too old to
+contain it, which is the failure that is no longer possible here.
 
-Start/stop the broker through the CLI rather than invoking the module
-directly — `ccd broker start` handles `PYTHONPATH`, backgrounding, and the
-pidfile for you:
+To run from a checkout instead, with nothing installed, `./ccd` at the repo
+root is a stub that calls the same code:
 
 ```bash
-ccd broker start     # nohup's `python3 -m ccd_broker`, waits for it to answer ping
-ccd ping             # ok (ccd-broker 1.0.0)
-ccd broker status     # up | down
+git clone <this-repo> ~/ccd && ~/ccd/ccd ping
+```
+
+Requires Python 3.11+ (stdlib only, no third-party dependencies) and a Linux
+box with `AF_UNIX`/`SO_PEERCRED` support.
+
+Start/stop the broker through the CLI rather than invoking the module
+directly — `ccd broker start` handles backgrounding and the pidfile for you,
+and waits for the broker to answer before reporting success:
+
+```bash
+ccd broker start     # spawns `ccd-broker`, waits for it to answer ping
+ccd ping             # ok (ccd-broker 1.3.0) up 0m
+ccd broker status    # up | down
 ccd broker stop
 ```
 
