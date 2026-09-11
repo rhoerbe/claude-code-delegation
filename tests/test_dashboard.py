@@ -7,6 +7,7 @@ does — the announce fields are broker logic and need no transport.
 """
 from __future__ import annotations
 
+import ast
 import json
 import os
 import subprocess
@@ -469,15 +470,36 @@ def test_cli_a_malformed_invocation_fails_loudly(tmp_path):
 # the dashboard is read-only
 # ----------------------------------------------------------------------
 
+# The CLI is Python now, so this reads the parse tree rather than splitting on
+# `cmd_dashboard() {`. Same property, and a sturdier instrument: a call built
+# through a variable or an alias shows up as "<computed>" instead of slipping
+# past a substring search.
+
+def _rpc_methods(repo_root, function: str) -> list:
+    """Every literal method name `function` passes to `rpc(...)`."""
+    tree = ast.parse((repo_root / "ccd_cli" / "cli.py").read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == function:
+            found = []
+            for call in ast.walk(node):
+                if not isinstance(call, ast.Call):
+                    continue
+                target = call.func
+                name = (target.id if isinstance(target, ast.Name)
+                        else getattr(target, "attr", None))
+                if name != "rpc" or not call.args:
+                    continue
+                first = call.args[0]
+                found.append(first.value if isinstance(first, ast.Constant)
+                             else "<computed>")
+            return found
+    raise AssertionError(f"{function} not found in ccd_cli/cli.py")
+
+
 def test_ccd_dashboard_only_calls_roster(repo_root):
-    cli = (repo_root / "ccd").read_text()
-    body = cli.split("cmd_dashboard() {", 1)[1].split("\ncmd_ping()", 1)[0]
-    calls = [line for line in body.splitlines() if "_ccd_rpc" in line]
-    assert len(calls) == 1 and "_ccd_rpc roster" in calls[0], repr(calls)
+    assert _rpc_methods(repo_root, "cmd_dashboard") == ["roster"]
 
 
 @pytest.mark.parametrize("method", ["send", "claim", "release", "retire", "announce"])
 def test_ccd_dashboard_never_calls_a_mutating_method(repo_root, method):
-    cli = (repo_root / "ccd").read_text()
-    body = cli.split("cmd_dashboard() {", 1)[1].split("\ncmd_ping()", 1)[0]
-    assert f"_ccd_rpc {method}" not in body
+    assert method not in _rpc_methods(repo_root, "cmd_dashboard")
