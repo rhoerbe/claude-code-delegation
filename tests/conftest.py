@@ -55,10 +55,9 @@ def call():
     return _call
 
 
-def rpc(sock: str, method: str, args: dict) -> dict:
+def _rpc(sock: str, method: str, args: dict) -> dict:
     """A client shaped exactly like the `ccd` CLI: connect, send one request,
-    read the reply, close. Standalone (not just a fixture) because
-    test_liveness's drift fixture needs the same shape from a subprocess."""
+    read the reply, close."""
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.connect(sock)
     try:
@@ -73,6 +72,13 @@ def rpc(sock: str, method: str, args: dict) -> dict:
         s.close()
     line = buf.split(b"\n", 1)[0]
     return json.loads(line) if line else {}
+
+
+@pytest.fixture
+def rpc():
+    """A client shaped exactly like the `ccd` CLI, for tests driving a
+    live_broker: rpc(sock, "send", {...})."""
+    return _rpc
 
 
 @pytest.fixture
