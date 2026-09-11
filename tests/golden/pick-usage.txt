@@ -1,0 +1,6 @@
+argv: ccd pick extra-argument
+exit: 2
+--- stdout ---
+
+--- stderr ---
+usage: ccd pick

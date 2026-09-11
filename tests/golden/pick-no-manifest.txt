@@ -1,0 +1,6 @@
+argv: ccd pick
+exit: 1
+--- stdout ---
+
+--- stderr ---
+ccd pick: no mapping manifest at <TMP>/mappings.json

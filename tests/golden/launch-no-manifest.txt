@@ -1,0 +1,6 @@
+argv: ccd launch
+exit: 1
+--- stdout ---
+
+--- stderr ---
+ccd launch: no mapping manifest at <TMP>/mappings.json

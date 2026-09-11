@@ -1,0 +1,6 @@
+argv: ccd launch some-id --issue
+exit: 2
+--- stdout ---
+
+--- stderr ---
+ccd launch: --issue needs a value

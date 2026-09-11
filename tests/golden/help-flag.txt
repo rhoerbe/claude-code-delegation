@@ -11,8 +11,10 @@ usage: ccd <subcommand> [args]
   ccd release <worker> [--force]
   ccd ls
   ccd dashboard [--scope <handle>] [--json] [--write <path>] [--rates <file>]
+  ccd pick
+  ccd launch [<mapping-id>] [--issue N] [--phase N] [--handle NAME] [-- args]
   ccd ping
   ccd broker start|stop|status
 
-env: CCD_SOCKET, CCD_HANDLE, CCD_PIDFILE
+env: CCD_SOCKET, CCD_HANDLE, CCD_PIDFILE, CCD_MAPPINGS
 --- stderr ---
