@@ -103,12 +103,157 @@ ccd broker stop
 | `CCD_HANDLE` | `ccd recv`/`announce`/`ret` | *(none — required if `<handle>` isn't passed positionally)* | Default handle for `recv`/`announce`/`ret` so a worker's skill/script doesn't have to hardcode it. |
 | `CCD_TRANSCRIPT_ROOT` | `ccd dashboard` | `${CLAUDE_CONFIG_DIR:-~/.claude}/projects` | Where Claude Code keeps per-project transcript directories. The dashboard is the one component that reads them (ADR-0008) — the broker and the rest of the CLI stay backend-agnostic and read no Claude-internal state at all. |
 | `CLAUDE_CODE_SESSION_ID` | `ccd announce` | *(set by Claude Code inside a session; empty elsewhere)* | Passed through to the broker so the dashboard can find that session's transcript. Announcing from a plain shell sends nothing and leaves whatever the session already reported. |
+| `CCD_MAPPINGS` | `ccd` (manifest reader) | `${XDG_CONFIG_HOME:-~/.config}/ccd/mappings.json` | The mapping manifest — see [The mapping manifest](#the-mapping-manifest). Read only by the CLI; the broker never sees it. Absent is not an error until something asks to pick from it. |
 | `CCD_EFFORT` | worker skill (`skills/ccd-worker.md`) convention, not read by `ccd` itself | — | Passed as the `effort` arg to `ccd announce`, so the roster (`ccd ls`) shows other participants which effort each handle carries. Nothing reads it back off the running session, so the `ccd-worker` skill compares it against `$CLAUDE_EFFORT` and warns on a mismatch. Set by whatever launches the session. |
-| `CCD_MODEL` | worker skill (`skills/ccd-worker.md`) convention, not read by `ccd` itself | — | The launcher's model-slot name (e.g. `sonnet`). Local only: it does **not** reach `ccd announce` (broker 1.3 dropped the roster's slot field, claude-code-delegation#13 — a resolved model id and a manifest `mapping` id are its replacements, once phase 2/4's manifest and launcher work exist). Still exported for the `ccd-worker` skill's own self-check, which compares it against the model the session believes itself to be. Set by whatever launches the session. |
+| `CCD_MODEL` | worker skill (`skills/ccd-worker.md`) convention, not read by `ccd` itself | — | The launcher's model-slot name (e.g. `sonnet`). Local only: it does **not** reach `ccd announce` (broker 1.3 dropped the roster's slot field, claude-code-delegation#13 — a resolved model id and a manifest `mapping` id are its replacements, once the manifest and `ccd launch` work exist). Still exported for the `ccd-worker` skill's own self-check, which compares it against the model the session believes itself to be. Set by whatever launches the session. |
 
 The broker itself takes no flags or config file — `$CCD_SOCKET` is its only
 configuration surface (`ccd-broker -h` / `python3 -m ccd_broker -h` for the
 one-line usage).
+
+## The mapping manifest
+
+A **mapping** is one named launch: which launcher runs, which model slot it
+asks Claude Code for, what effort it requests, and what the roster should then
+advertise. A human picks one entry and every derived value comes from it, so
+there is no second place to state the same fact and no way for two statements
+of it to disagree ([ADR-0009](docs/adr/0009-a-launch-picks-one-named-mapping.md)).
+
+The manifest is JSON at `${XDG_CONFIG_HOME:-~/.config}/ccd/mappings.json`,
+overridable with `$CCD_MAPPINGS`. **This repo ships no manifest** — populating
+one is a deployment concern, like everything else in *What this repo is not*.
+What is public is the shape, the validation rules, and a reference reader
+([`ccd_mappings/`](ccd_mappings/)) that `ccd` calls.
+
+### Vocabulary
+
+- A **model slot** is exactly one of `fable`, `opus`, `sonnet`, `haiku` — the
+  four names `claude --model` accepts. **A slot carries no effort.** Never
+  write one as `opus/high`: that puts a setting inside a name, and then the
+  name and the `effort` field can contradict each other.
+- **effort** is its own field with exactly one value: `low`, `medium`, `high`,
+  `xhigh` or `max`.
+- So an entry displayed as `Opus/Max → Kimi-K3` stores `slot: "opus"` and
+  `effort: "max"`, never `slot: "opus/max"`.
+
+### Effort is requested, not guaranteed
+
+The `effort` in a manifest entry is what will be **asked for**. It is not a
+promise about what runs, and nothing in `ccd` pretends otherwise:
+
+- Claude Code emits effort as a thinking budget, and that budget can be
+  **silently downgraded** server-side for some models.
+- A non-Anthropic backend **reinterprets** it against its own scale. Models
+  reached that way generally advertise a `reasoning`/`reasoning_effort`
+  control, and a provider may cross-map a token budget onto it — but whether
+  an Anthropic-compatible `/v1/messages` hop performs that translation is
+  undocumented, and this project does not guess.
+
+Each entry's effort is therefore set **by hand** by whoever renders the
+manifest, from their own benchmark reading. No component infers it. What a
+session *actually* got is a separate fact, read from `$CLAUDE_EFFORT` (which
+Claude Code sets per turn, after any downgrade) and compared against the
+declared value — requested and observed never collapse into one number.
+
+### Schema
+
+Top level is an object, so the file can be versioned:
+
+| key | type | meaning |
+|---|---|---|
+| `schema` | integer | Schema version. `1` today. A reader refuses a file newer than it understands rather than guessing. |
+| `mappings` | array | The entries, in the order a picker should present them. Must not be empty. |
+
+Each entry:
+
+| key | required | meaning |
+|---|---|---|
+| `id` | yes | Stable name for this mapping, derived from the model that actually serves it plus the effort — `kimi-k3-max`, not `openrouter-opus`. Unique across the file. Lowercase `[a-z0-9][a-z0-9._-]*`, because it becomes `$CCD_MAPPING` in the launched session. |
+| `slot` | yes | `fable` \| `opus` \| `sonnet` \| `haiku`. What Claude Code is asked for. Under a remapped backend this is the disguise, not the model. |
+| `effort` | yes | `low` \| `medium` \| `high` \| `xhigh` \| `max`. Requested, not guaranteed — see above. |
+| `launcher` | yes | A **bare command name**, resolved on `$PATH` at launch. Not a path, not a name with arguments. It must accept Claude Code's own `--model`/`--effort`/`--name` flags, since that is how the picked entry reaches the session. |
+| `model` | yes | The model expected to actually serve the session — `claude-sonnet-5` for a first-party entry, `moonshotai/kimi-k3` for a remapped one. This is what the roster advertises and what an observed-vs-declared check compares against. |
+| `display` | yes | The human-readable label a picker shows. Presentation only: the picker shows `slot`, `effort` and `model` beside it, so a label that drifts is visible rather than believed. |
+| `notes` | no | Free text for the operator — why this effort, what the benchmark said. |
+
+Unknown keys, at either level, are ignored rather than refused: the file is
+machine-rendered, and a producing layer that learns a new field should not
+break every older reader.
+
+### Worked example
+
+Two first-party entries (bare `claude`) and two reached through a remapped
+launcher. `claude-openrouter` here is an illustrative name only — real
+launcher names live in the deployment layer, not in this repo:
+
+```json
+{
+  "schema": 1,
+  "mappings": [
+    {
+      "id": "sonnet-5-medium",
+      "slot": "sonnet",
+      "effort": "medium",
+      "launcher": "claude",
+      "model": "claude-sonnet-5",
+      "display": "Sonnet/Medium"
+    },
+    {
+      "id": "opus-5-high",
+      "slot": "opus",
+      "effort": "high",
+      "launcher": "claude",
+      "model": "claude-opus-5",
+      "display": "Opus/High"
+    },
+    {
+      "id": "kimi-k3-max",
+      "slot": "opus",
+      "effort": "max",
+      "launcher": "claude-openrouter",
+      "model": "moonshotai/kimi-k3",
+      "display": "Opus/Max → Kimi-K3",
+      "notes": "effort set by hand from benchmark reading; requested, not guaranteed"
+    },
+    {
+      "id": "glm-5.3-flash-high",
+      "slot": "sonnet",
+      "effort": "high",
+      "launcher": "claude-openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "display": "Sonnet/High → GLM-5.3-Flash"
+    }
+  ]
+}
+```
+
+Note `kimi-k3-max` and `glm-5.3-flash-high` share no slot with each other and
+`kimi-k3-max` shares the `opus` slot with a first-party entry. Several entries
+may name one slot; only `id` is unique. That is the point of deriving the id
+from the real model — ids built from `<launcher>-<slot>` would collide exactly
+where the difference matters.
+
+### Validation, and where it lives
+
+**In the reader, never in the broker.** The broker treats roster text as opaque
+and learns no Claude Code vocabulary ([ADR-0004](docs/adr/0004-one-transport-behind-a-seam.md)),
+which is what lets it stay agnostic about backends that do not exist yet.
+`ccd` checks, when it loads the file:
+
+- `slot` is one of the four; `effort` is one of the five; both case-sensitive.
+- every `id` matches the id pattern and is unique across the file.
+- `launcher` is a bare name — no path separator, no leading `-`.
+- required fields are present and non-empty; `notes` is a string if given.
+- `schema` is an integer no newer than the reader.
+
+Every problem is reported at once, not just the first, because a
+machine-rendered file is fixed by regenerating it, not by a round trip per
+fault. Two things are deliberately *not* load-time errors: a **missing** file
+(that is "not set up yet", distinct from "set up wrong", and only matters when
+something asks to pick from it), and a launcher that is **not installed** —
+shape is host-independent, so availability is resolved at launch instead, which
+lets a controller validate a manifest it renders for a host whose launchers it
+does not have.
 
 ## Quick usage example
 
@@ -246,6 +391,9 @@ Full protocol semantics (wire format, blocking/dequeue-on-ack, the
   `tests/ccd_smoke.sh`.
 - [`tests/test_affiliation.py`](tests/test_affiliation.py),
   [`tests/test_deliver_ack.py`](tests/test_deliver_ack.py),
-  [`tests/test_dashboard.py`](tests/test_dashboard.py) — claim-based
-  affiliation, dequeue-on-ack, and the dashboard. Each is a plain script with
-  no test framework; run it directly.
+  [`tests/test_dashboard.py`](tests/test_dashboard.py),
+  [`tests/test_mappings.py`](tests/test_mappings.py) — claim-based
+  affiliation, dequeue-on-ack, the dashboard, and the mapping manifest
+  contract. Each is a plain script with no test framework; run it directly.
+  They define no `test_*` functions, so a `pytest` invocation collects nothing
+  and passes quietly.

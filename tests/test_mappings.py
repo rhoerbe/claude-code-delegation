@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -22,9 +23,10 @@ from ccd_mappings import manifest as m  # noqa: E402
 
 FAILURES: list[str] = []
 
-# The worked example from README.md, kept here so the two cannot drift apart
-# without this suite saying so. One first-party entry and one remapped entry
-# are the minimum that proves the shape carries both.
+# The worked example from README.md. `run()` re-reads it out of the README and
+# compares, so the two cannot drift apart without this suite saying so. One
+# first-party entry and one remapped entry are the minimum that proves the
+# shape carries both.
 EXAMPLE = {
     "schema": 1,
     "mappings": [
@@ -115,6 +117,18 @@ def run(tmp: Path) -> int:
     print("the worked example in README.md is valid:")
     check("example validates clean", m.validate(EXAMPLE) == [],
           repr(m.validate(EXAMPLE)))
+
+    readme = Path(__file__).resolve().parent.parent / "README.md"
+    blocks = re.findall(r"```json\n(.*?)```", readme.read_text(encoding="utf-8"),
+                        re.S)
+    check("README.md carries exactly one json block", len(blocks) == 1,
+          f"found {len(blocks)}")
+    if len(blocks) == 1:
+        published = json.loads(blocks[0])
+        check("README's example is the one tested here", published == EXAMPLE,
+              "README.md and EXAMPLE have drifted apart")
+        check("and it validates as published", m.validate(published) == [],
+              repr(m.validate(published)))
     check("it carries a first-party entry (bare `claude`)",
           any(e["launcher"] == "claude" for e in EXAMPLE["mappings"]))
     check("it carries a remapped entry (another launcher)",
