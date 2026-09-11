@@ -4,6 +4,11 @@ The manifest is the one place a launch's facts are stated. `ccd` reads it and
 validates it here; the broker never sees any of this vocabulary and must not
 learn it (ADR-0004, ADR-0009).
 
+Two stored fields carry a launch — `launcher` and `model` — with `effort`
+stored only where it applies. The id and the label are *derived*, never
+stored: a hand-written name can contradict the fields beside it, which is the
+defect of issue #10 one level down.
+
 Shape and availability are checked at different moments on purpose. A manifest
 is well-formed or not on any machine, so `validate` runs at load; whether a
 named launcher exists depends on the host, so `resolve_launcher` runs at launch.
@@ -20,20 +25,27 @@ from typing import Optional
 
 SCHEMA = 1
 
-# Claude Code's four `--model` names. Closed set: a slot the CLI cannot be
-# given is a launch that fails after the window is already open.
-SLOTS = ("fable", "opus", "sonnet", "haiku")
-
-# Claude Code's `--effort` values, weakest first. Requested, never guaranteed
-# — see ADR-0009. Order is meaningful only for display, never for comparison.
+# Claude Code's `--effort` values, weakest first. Requested, never guaranteed,
+# and for some models never sent at all — see ADR-0009. Order is meaningful
+# only for display, never for comparison.
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
-# Lowercase so an id is one shell-safe word: it becomes `$CCD_MAPPING` in the
-# launched session and is read back from rosters and transcripts.
+# A derived id must come out as one shell-safe lowercase word: it becomes
+# `$CCD_MAPPING` in the launched session and is read back from rosters and
+# transcripts.
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 
-REQUIRED = ("id", "slot", "effort", "launcher", "model")
-OPTIONAL = ("notes",)
+REQUIRED = ("launcher", "model")
+OPTIONAL = ("effort", "notes")
+
+# Fields that used to be stored and are now derived or gone. These are not
+# "unknown, possibly from a newer producer" — they are known-dead, and their
+# presence means the file predates this contract and was not regenerated.
+RETIRED = {
+    "slot": "models are named directly; there is no slot",
+    "id": "the id is derived from model and effort",
+    "display": "the label is derived",
+}
 
 
 class ManifestError(Exception):
@@ -59,12 +71,85 @@ def manifest_path(env: Optional[dict] = None) -> Path:
     return Path(config).expanduser() / "ccd" / "mappings.json"
 
 
+def _short_model(model: str) -> str:
+    """`moonshotai/kimi-k3` -> `kimi-k3`. Shortened, never restyled.
+
+    The id is shown as its provider writes it. Restyling it would need no table
+    but would *invent* a name — `glm-5.3-flash` is not `Glm-5.3-Flash` to
+    anyone — and a label nobody can grep for is a recurring papercut, since this
+    same string appears in the manifest's `model`, in `ccd ls`, and in the
+    transcript. Dropping the provider prefix is shortening, not renaming, and
+    the full id is one column away.
+    """
+    return model.rsplit("/", 1)[-1]
+
+
+def _slug(text: str) -> str:
+    """Lowercase `text` into one id-safe word.
+
+    `claude-sonnet-5[1m]` -> `claude-sonnet-5-1m`: the context-window suffix is
+    part of what distinguishes two otherwise identical entries, so it survives
+    into the id rather than being stripped.
+    """
+    out = re.sub(r"[^a-z0-9._-]+", "-", text.strip().lower())
+    out = re.sub(r"-{2,}", "-", out).strip("-.")
+    return out
+
+
+def entry_id(entry: dict, *, with_launcher: bool = False) -> str:
+    """The id for one entry, derived from its model and effort.
+
+    `with_launcher` appends the launcher; `ids()` applies it to *every* member
+    of a colliding group, so the result never depends on file order.
+    """
+    parts = [_slug(_short_model(entry.get("model") or ""))]
+    effort = (entry.get("effort") or "").strip()
+    if effort:
+        parts.append(_slug(effort))
+    if with_launcher:
+        parts.append(_slug(entry.get("launcher") or ""))
+    return "-".join(p for p in parts if p)
+
+
+def ids(doc: dict) -> list:
+    """Derived ids, positionally aligned with `entries(doc)`.
+
+    Two entries reaching the same model at the same effort through different
+    launchers collide on the base id; both then carry their launcher, so
+    reordering the file cannot rename an entry. Anything still colliding is a
+    true duplicate, which `validate` reports.
+    """
+    items = [e if isinstance(e, dict) else {} for e in entries(doc)]
+    base = [entry_id(e) for e in items]
+    clashing = {i for i in base if base.count(i) > 1}
+    return [entry_id(e, with_launcher=True) if b in clashing else b
+            for e, b in zip(items, base)]
+
+
+def display(entry: dict) -> str:
+    """The label for an entry, derived rather than stored.
+
+    The model as its provider writes it, plus the effort when there is one:
+
+        kimi-k3/max
+        deepseek-v4.1-flash
+        claude-sonnet-5/medium
+
+    A stored label can contradict the fields it describes, so there is no
+    `display` key and no override (ADR-0009). An entry needing a human aside
+    carries `notes`, which is visibly not authoritative.
+    """
+    model = _short_model((entry.get("model") or "").strip())
+    effort = (entry.get("effort") or "").strip()
+    return f"{model}/{effort}" if model and effort else model or effort
+
+
 def validate(doc) -> list:
     """Return every problem with `doc`, or an empty list if it is well-formed.
 
-    Unknown keys are *not* problems. The file is machine-rendered, so a
-    producing layer that learns a new field must not break every older reader
-    that does not know it yet.
+    Unknown keys are *not* problems: the file is machine-rendered, so a
+    producing layer that learns a field must not break older readers. Keys this
+    contract *retired* are a different matter and are reported — see `RETIRED`.
     """
     problems = []
     if not isinstance(doc, dict):
@@ -81,61 +166,53 @@ def validate(doc) -> list:
             "upgrade ccd"
         )
 
-    entries = doc.get("mappings")
-    if not isinstance(entries, list):
+    items = doc.get("mappings")
+    if not isinstance(items, list):
         problems.append("'mappings' must be an array")
         return problems
-    if not entries:
+    if not items:
         problems.append("'mappings' is empty; there is nothing to pick")
 
-    seen = {}
-    for index, entry in enumerate(entries):
+    for index, entry in enumerate(items):
         label = f"mappings[{index}]"
         if not isinstance(entry, dict):
             problems.append(f"{label} must be an object")
             continue
-        ident = entry.get("id")
-        if isinstance(ident, str) and ident:
-            label = f"mappings[{index}] ('{ident}')"
+        model = entry.get("model")
+        if isinstance(model, str) and model.strip():
+            label = f"mappings[{index}] ('{model.strip()}')"
 
         for key in REQUIRED:
             value = entry.get(key)
             if not isinstance(value, str) or not value.strip():
                 problems.append(f"{label}: '{key}' must be a non-empty string")
+
+        # `null` says the same thing as an absent key — it is how a transcript
+        # records "none was sent" — so it is accepted. An empty string is
+        # neither a value nor an honest absence, so it is not.
+        effort = entry.get("effort")
+        if effort is not None:
+            if not isinstance(effort, str) or not effort.strip():
+                problems.append(
+                    f"{label}: 'effort' must be a non-empty string when "
+                    "present, or omitted entirely (null means omitted)"
+                )
+            elif effort not in EFFORTS:
+                problems.append(
+                    f"{label}: 'effort' is {effort!r}, must be one of "
+                    f"{'/'.join(EFFORTS)}"
+                )
+
         notes = entry.get("notes")
         if notes is not None and not isinstance(notes, str):
             problems.append(f"{label}: 'notes' must be a string when present")
 
-        if isinstance(ident, str) and ident:
-            if not ID_RE.match(ident):
+        for key, why in RETIRED.items():
+            if key in entry:
                 problems.append(
-                    f"{label}: 'id' must match {ID_RE.pattern} — lowercase, "
-                    "so it is one shell-safe word"
+                    f"{label}: '{key}' is no longer a field — {why}; "
+                    "regenerate the manifest"
                 )
-            if ident in seen:
-                problems.append(
-                    f"{label}: duplicate 'id', already used by "
-                    f"mappings[{seen[ident]}]"
-                )
-            else:
-                seen[ident] = index
-
-        slot = entry.get("slot")
-        if isinstance(slot, str) and slot not in SLOTS:
-            hint = ""
-            if "/" in slot:
-                hint = " — a slot carries no effort; put it in 'effort'"
-            problems.append(
-                f"{label}: 'slot' is {slot!r}, must be one of "
-                f"{'/'.join(SLOTS)}{hint}"
-            )
-
-        effort = entry.get("effort")
-        if isinstance(effort, str) and effort not in EFFORTS:
-            problems.append(
-                f"{label}: 'effort' is {effort!r}, must be one of "
-                f"{'/'.join(EFFORTS)}"
-            )
 
         launcher = entry.get("launcher")
         if isinstance(launcher, str) and launcher.strip():
@@ -148,6 +225,33 @@ def validate(doc) -> list:
                 problems.append(
                     f"{label}: 'launcher' {launcher!r} would be read as an option"
                 )
+
+    # The id is derived, so a clash is a duplicated entry rather than a typo.
+    derived = ids(doc)
+    for index, ident in enumerate(derived):
+        entry = items[index] if isinstance(items[index], dict) else {}
+        label = f"mappings[{index}]"
+        model = entry.get("model")
+        # Check the model's own slug, not the assembled id: a model of "!!!"
+        # slugs to nothing and would otherwise leave an id made only of the
+        # effort — a wrong name rather than a refused one.
+        if isinstance(model, str) and model.strip() and not _slug(
+                _short_model(model)):
+            problems.append(
+                f"{label}: 'model' {model!r} does not yield a usable id"
+            )
+        elif not ident or not ID_RE.match(ident):
+            if isinstance(model, str) and model.strip():
+                problems.append(
+                    f"{label}: 'model' {model!r} does not yield a usable id "
+                    f"(derived {ident!r})"
+                )
+        elif derived.count(ident) > 1 and index != derived.index(ident):
+            problems.append(
+                f"{label}: same launcher, model and effort as "
+                f"mappings[{derived.index(ident)}] — both derive the id "
+                f"'{ident}'"
+            )
 
     return problems
 
@@ -180,64 +284,11 @@ def entries(doc: dict) -> list:
 
 
 def find(doc: dict, ident: str) -> Optional[dict]:
-    """The entry with this id, or None."""
-    for entry in entries(doc):
-        if entry.get("id") == ident:
+    """The entry whose derived id is `ident`, or None."""
+    for entry, derived in zip(entries(doc), ids(doc)):
+        if derived == ident:
             return entry
     return None
-
-
-def display(entry: dict) -> str:
-    """The human-readable label for an entry, derived rather than stored.
-
-    A stored label can contradict the fields it describes, which is the defect
-    of issue #10 one level down, so there is no `display` key and no override
-    (ADR-0009). An entry needing a human aside carries `notes`, which is
-    visibly not authoritative.
-
-    Remapped, where the model is not what the slot names:
-
-        Opus/Max → kimi-k3
-
-    First-party, where the slot and the model say the same thing, collapsed —
-    rendering "Sonnet/Medium → claude-sonnet-5" would say it twice:
-
-        Sonnet/Medium
-    """
-    slot = (entry.get("slot") or "").strip()
-    effort = (entry.get("effort") or "").strip()
-    model = (entry.get("model") or "").strip()
-    # The left half is ours — a slot and an effort from closed vocabularies
-    # this project defines — so title-casing it cannot get a name wrong.
-    asked = f"{slot.title()}/{effort.title()}"
-    if not model or _names_the_slot(slot, model):
-        return asked
-    return f"{asked} → {_short_model(model)}"
-
-
-def _names_the_slot(slot: str, model: str) -> bool:
-    """True when the model is the one the slot already names.
-
-    A provider-prefixed id (`moonshotai/kimi-k3`) is never first-party, and a
-    first-party id that names a *different* slot than the entry asks for is
-    deliberately not collapsed — that pairing is worth showing, not hiding.
-    """
-    if not slot or "/" in model:
-        return False
-    return slot.lower() in model.lower().replace("_", "-").split("-")
-
-
-def _short_model(model: str) -> str:
-    """`moonshotai/kimi-k3` -> `kimi-k3`. Shortened, never restyled.
-
-    The id is shown as its provider writes it. Title-casing it would need no
-    table but would *invent* a name — `glm-5.3-flash` is not `Glm-5.3-Flash`
-    to anyone — and a label nobody can grep for is a recurring papercut, since
-    this same string appears in the manifest's `model`, in `ccd ls`, and in the
-    transcript. Dropping the provider prefix is shortening, not renaming, and
-    the full id is one column away.
-    """
-    return model.rsplit("/", 1)[-1]
 
 
 def resolve_launcher(entry: dict) -> str:
@@ -253,6 +304,6 @@ def resolve_launcher(entry: dict) -> str:
         raise ManifestError(
             None,
             [f"launcher {name!r} for mapping "
-             f"{entry.get('id')!r} is not on $PATH"],
+             f"{entry_id(entry)!r} is not on $PATH"],
         )
     return found

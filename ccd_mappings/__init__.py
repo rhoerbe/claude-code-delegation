@@ -10,22 +10,23 @@ learn no Claude Code vocabulary (ADR-0004).
 
 Public surface:
 
-    from ccd_mappings import load, manifest_path, validate
+    from ccd_mappings import display, entries, ids, load
 
-    doc = load()                     # raises ManifestError listing every problem
-    for entry in entries(doc):       # file order is presentation order
-        ...
+    doc = load()                          # raises ManifestError, listing every problem
+    for ident, entry in zip(ids(doc), entries(doc)):   # file order is picker order
+        print(ident, display(entry))      # both derived, never stored
 """
 
 from .manifest import (  # noqa: F401
     EFFORTS,
     ID_RE,
     SCHEMA,
-    SLOTS,
     ManifestError,
     display,
     entries,
+    entry_id,
     find,
+    ids,
     load,
     manifest_path,
     resolve_launcher,
@@ -36,11 +37,12 @@ __all__ = [
     "EFFORTS",
     "ID_RE",
     "SCHEMA",
-    "SLOTS",
     "ManifestError",
     "display",
     "entries",
+    "entry_id",
     "find",
+    "ids",
     "load",
     "manifest_path",
     "resolve_launcher",

@@ -113,11 +113,11 @@ one-line usage).
 
 ## The mapping manifest
 
-A **mapping** is one named launch: which launcher runs, which model slot it
-asks Claude Code for, what effort it requests, and what the roster should then
-advertise. A human picks one entry and every derived value comes from it, so
-there is no second place to state the same fact and no way for two statements
-of it to disagree ([ADR-0009](docs/adr/0009-a-launch-picks-one-named-mapping.md)).
+A **mapping** is one named launch: which launcher runs, which model it is told
+to use, and what effort it requests. A human picks one entry and every other
+value — the id, the label — is derived from it, so there is no second place to
+state the same fact and no way for two statements of it to disagree
+([ADR-0009](docs/adr/0009-a-launch-picks-one-named-mapping.md)).
 
 The manifest is JSON at `${XDG_CONFIG_HOME:-~/.config}/ccd/mappings.json`,
 overridable with `$CCD_MAPPINGS`. **This repo ships no manifest** — populating
@@ -125,23 +125,31 @@ one is a deployment concern, like everything else in *What this repo is not*.
 What is public is the shape, the validation rules, and a reference reader
 ([`ccd_mappings/`](ccd_mappings/)) that `ccd` calls.
 
-### Vocabulary
+### Name the model, not a slot
 
-- A **model slot** is exactly one of `fable`, `opus`, `sonnet`, `haiku` — the
-  four names `claude --model` accepts. **A slot carries no effort.** Never
-  write one as `opus/high`: that puts a setting inside a name, and then the
-  name and the `effort` field can contradict each other.
-- **effort** is its own field with exactly one value: `low`, `medium`, `high`,
-  `xhigh` or `max`.
-- So an entry shown as `Opus/Max → Kimi-K3` stores `slot: "opus"` and
-  `effort: "max"`, never `slot: "opus/max"` — and that label is *derived from
-  those two fields*, never stored beside them.
+An entry names the model **directly**, as the provider writes it, and that
+string is passed verbatim to `claude --model`. There is no `slot` field and no
+`fable`/`opus`/`sonnet`/`haiku` indirection: a full provider slug works as a
+`--model` argument, so the slot was only ever one way to reach a model, and the
+direct name reaches any model the provider offers rather than the handful a
+launcher happens to have been configured with. [ADR-0009](docs/adr/0009-a-launch-picks-one-named-mapping.md)
+records the probe that settled it.
 
-### Effort is requested, not guaranteed
+**effort** is a separate field with one value — `low`, `medium`, `high`,
+`xhigh` or `max` — and it is **optional**, because for some models it does not
+apply at all (see below).
+
+### Effort is requested, not guaranteed — and sometimes not sent
 
 The `effort` in a manifest entry is what will be **asked for**. It is not a
 promise about what runs, and nothing in `ccd` pretends otherwise:
 
+- For some models it is **never sent**. Claude Code drops effort when the model
+  rejects it and stops sending it on subsequent turns. Every `claude-haiku-4-5`
+  transcript on the machine this was checked on records `effort: null` —
+  including sessions launched with an explicit `--effort low` and `--effort
+  xhigh`. **Omit `effort` for those entries**: one claiming a value would be
+  fiction.
 - Claude Code emits effort as a thinking budget, and that budget can be
   **silently downgraded** server-side for some models.
 - A non-Anthropic backend **reinterprets** it against its own scale. Models
@@ -151,7 +159,8 @@ promise about what runs, and nothing in `ccd` pretends otherwise:
   undocumented, and this project does not guess.
 
 Each entry's effort is therefore set **by hand** by whoever renders the
-manifest, from their own benchmark reading. No component infers it. What a
+manifest, from their own benchmark reading, and left out where it does not
+apply. No component infers it. What a
 session *actually* got is a separate fact, read from `$CLAUDE_EFFORT` (which
 Claude Code sets per turn, after any downgrade) and compared against the
 declared value — requested and observed never collapse into one number.
@@ -169,115 +178,139 @@ Each entry:
 
 | key | required | meaning |
 |---|---|---|
-| `id` | yes | Stable name for this mapping, derived from the model that actually serves it plus the effort — `kimi-k3-max`, not `openrouter-opus`. Unique across the file. Lowercase `[a-z0-9][a-z0-9._-]*`, because it becomes `$CCD_MAPPING` in the launched session. |
-| `slot` | yes | `fable` \| `opus` \| `sonnet` \| `haiku`. What Claude Code is asked for. Under a remapped backend this is the disguise, not the model. |
-| `effort` | yes | `low` \| `medium` \| `high` \| `xhigh` \| `max`. Requested, not guaranteed — see above. |
-| `launcher` | yes | A **bare command name**, resolved on `$PATH` at launch. Not a path, not a name with arguments. It must accept Claude Code's own `--model`/`--effort`/`--name` flags, since that is how the picked entry reaches the session. |
-| `model` | yes | The model expected to actually serve the session — `claude-sonnet-5` for a first-party entry, `moonshotai/kimi-k3` for a remapped one. This is what the roster advertises and what an observed-vs-declared check compares against. |
+| `launcher` | yes | A **bare command name**, resolved on `$PATH` at launch. Not a path, not a name with arguments. It must accept Claude Code's own `--model`/`--effort`/`--name` flags, since that is how the picked entry reaches the session. Not derivable from anything else: one model is often reachable through more than one launcher. |
+| `model` | yes | The model id, as its provider writes it, passed **verbatim** to `--model` — `claude-sonnet-5`, `moonshotai/kimi-k3`, `deepseek/deepseek-v4.1-flash`. May carry a `[1m]` context suffix, see below. This is also what the roster advertises and what an observed-vs-declared check compares against. |
+| `effort` | no | `low` \| `medium` \| `high` \| `xhigh` \| `max`. Requested, not guaranteed — and **omitted entirely** for models that never receive it. |
 | `notes` | no | Free text for the operator — why this effort, what the benchmark said. Shown as an aside, never as the label. |
 
-There is **no `display` key**. The label a picker shows is derived from the
-entry — see [The label is derived](#the-label-is-derived) — so it cannot
-contradict the fields it describes.
+That is the whole stored shape. Two keys carry a launch, a third qualifies it
+where it applies, and the fourth is for the human.
+
+**Derived, never stored: the `id` and the label.** Both come from the fields
+above, so neither can contradict them — see [The id is derived](#the-id-is-derived)
+and [The label is derived](#the-label-is-derived).
 
 Unknown keys, at either level, are ignored rather than refused: the file is
 machine-rendered, and a producing layer that learns a new field should not
-break every older reader.
+break every older reader. **Retired keys are refused**, though — an entry
+carrying `slot`, `id` or `display` is a file that predates this contract and
+was not regenerated, which is worth saying out loud rather than silently
+reinterpreting.
+
+### The `[1m]` context suffix
+
+Any model outside Claude Code's own catalog — which is every third-party slug —
+makes the session assume a **200k context window** for auto-compaction,
+however it was reached. Appending `[1m]` to the model name asks for 1M
+instead, and `CLAUDE_CODE_MAX_CONTEXT_TOKENS` sets an exact value.
+
+Because `model` is passed verbatim, the suffix belongs in that string rather
+than in a field of its own:
+
+```
+{ "launcher": "claude-openrouter", "model": "moonshotai/kimi-k3[1m]", "effort": "max" }
+```
+
+Omitting it is silent: nothing fails, long sessions simply compact early
+against a window smaller than the model actually has. The suffix also survives
+into the derived id (`kimi-k3-1m-max`), so an entry with it and one without are
+distinct mappings rather than a collision.
+
+### The id is derived
+
+An entry's id comes from its **model and effort** — `kimi-k3-max`,
+`deepseek-v4.1-flash` for an entry with no effort — lowercased into one
+shell-safe word, since it becomes `$CCD_MAPPING` in the launched session.
+There is no `id` key: a hand-written one can say `kimi-k3-max` on an entry
+running `high`, which is the same defect as a hand-written label.
+
+Where two entries reach the same model at the same effort through **different
+launchers**, both ids carry their launcher (`kimi-k3-max-claude-openrouter`).
+Both, not just the second — so reordering the file cannot rename an entry.
+Two entries agreeing on launcher, model *and* effort are a true duplicate, and
+that is a validation error.
 
 ### The label is derived
 
-A picker shows each entry as a label, and that label is computed from `slot`,
-`effort` and `model` by `ccd_mappings.display()` — there is no stored field for
-it and no override. A stored label is free text that can disagree with the
-fields beside it, which is issue #10's defect one level down; deriving it makes
-that disagreement unrepresentable rather than merely discouraged. One function
-means the picker and any other renderer cannot diverge either.
-
-Two shapes come out of it:
+A picker shows each entry as a label, computed from `model` and `effort` by
+`ccd_mappings.display()` — there is no stored field for it and no override. A
+stored label is free text that can disagree with the fields beside it, which is
+issue #10's defect one level down; deriving it makes that disagreement
+unrepresentable rather than merely discouraged. One function means the picker
+and any other renderer cannot diverge either.
 
 | entry | label |
 |---|---|
-| slot `opus`, effort `max`, model `moonshotai/kimi-k3` | `Opus/Max → kimi-k3` |
-| slot `sonnet`, effort `medium`, model `claude-sonnet-5` | `Sonnet/Medium` |
-
-The first-party case collapses: when the model is the one the slot already
-names, `Sonnet/Medium → claude-sonnet-5` would say it twice. An entry whose
-first-party model names a *different* slot than it asks for does **not**
-collapse — `Opus/Xhigh → claude-sonnet-5` — because that pairing is worth
-showing, not hiding.
+| model `moonshotai/kimi-k3`, effort `max` | `kimi-k3/max` |
+| model `deepseek/deepseek-v4.1-flash`, no effort | `deepseek-v4.1-flash` |
+| model `claude-sonnet-5`, effort `medium` | `claude-sonnet-5/medium` |
 
 **Model ids are shown as their provider writes them**, shortened to the last
-path segment and otherwise untouched: `moonshotai/kimi-k3` → `kimi-k3`,
-`z-ai/glm-5.3-flash` → `glm-5.3-flash`. Restyling them would need no table but
+path segment and otherwise untouched. Restyling them would need no table but
 would invent a name — `glm-5.3-flash` is not `Glm-5.3-Flash` to anyone — and
 the label would stop matching the string a reader meets everywhere else: the
 manifest's own `model`, `ccd ls`, the transcript. Rendering it verbatim keeps
 the label greppable and needs no knowledge of model families.
 
-The slot and effort half *is* title-cased, because those come from closed
-vocabularies this project defines — `Opus/Max` is not a third party's product
-name, so there is nothing there to get wrong.
+An entry with no effort shows the model alone, which is the honest rendering:
+there is no value to display because none is sent.
 
 If an entry needs a human aside, that is what `notes` is for — and `notes` is
 visibly not the label, which is the difference that matters.
 
 ### Worked example
 
-Two first-party entries (bare `claude`) and two reached through a remapped
-launcher. `claude-openrouter` here is an illustrative name only — real
-launcher names live in the deployment layer, not in this repo:
+Three first-party entries (bare `claude`), one of them with no effort because
+its model never receives one, and two reached through a remapped launcher —
+one carrying the `[1m]` suffix. `claude-openrouter` here is an illustrative
+name only; real launcher names live in the deployment layer, not in this repo:
 
 ```json
 {
   "schema": 1,
   "mappings": [
     {
-      "id": "sonnet-5-medium",
-      "slot": "sonnet",
-      "effort": "medium",
       "launcher": "claude",
-      "model": "claude-sonnet-5"
+      "model": "claude-sonnet-5",
+      "effort": "medium"
     },
     {
-      "id": "opus-5-high",
-      "slot": "opus",
-      "effort": "high",
       "launcher": "claude",
-      "model": "claude-opus-5"
+      "model": "claude-opus-5",
+      "effort": "high"
     },
     {
-      "id": "kimi-k3-max",
-      "slot": "opus",
+      "launcher": "claude",
+      "model": "claude-haiku-4-5",
+      "notes": "no effort: this model never receives one, so claiming a value would be fiction"
+    },
+    {
+      "launcher": "claude-openrouter",
+      "model": "moonshotai/kimi-k3[1m]",
       "effort": "max",
-      "launcher": "claude-openrouter",
-      "model": "moonshotai/kimi-k3",
-      "notes": "effort set by hand from benchmark reading; requested, not guaranteed"
+      "notes": "effort set by hand from benchmark reading; [1m] lifts the assumed 200k window"
     },
     {
-      "id": "glm-5.3-flash-high",
-      "slot": "sonnet",
-      "effort": "high",
       "launcher": "claude-openrouter",
-      "model": "z-ai/glm-5.3-flash"
+      "model": "deepseek/deepseek-v4.1-flash"
     }
   ]
 }
 ```
 
-Note `kimi-k3-max` and `glm-5.3-flash-high` share no slot with each other and
-`kimi-k3-max` shares the `opus` slot with a first-party entry. Several entries
-may name one slot; only `id` is unique. That is the point of deriving the id
-from the real model — ids built from `<launcher>-<slot>` would collide exactly
-where the difference matters.
-
-A picker renders that file as:
+Nothing in that file states an id or a label; both are derived. A picker
+renders it as:
 
 ```
-1. Sonnet/Medium
-2. Opus/High
-3. Opus/Max → kimi-k3
-4. Sonnet/High → glm-5.3-flash
+1. claude-sonnet-5/medium
+2. claude-opus-5/high
+3. claude-haiku-4-5
+4. kimi-k3[1m]/max
+5. deepseek-v4.1-flash
 ```
+
+with ids `claude-sonnet-5-medium`, `claude-opus-5-high`, `claude-haiku-4-5`,
+`kimi-k3-1m-max` and `deepseek-v4.1-flash`.
 
 ### Validation, and where it lives
 
@@ -286,10 +319,14 @@ and learns no Claude Code vocabulary ([ADR-0004](docs/adr/0004-one-transport-beh
 which is what lets it stay agnostic about backends that do not exist yet.
 `ccd` checks, when it loads the file:
 
-- `slot` is one of the four; `effort` is one of the five; both case-sensitive.
-- every `id` matches the id pattern and is unique across the file.
-- `launcher` is a bare name — no path separator, no leading `-`.
-- required fields are present and non-empty; `notes` is a string if given.
+- `launcher` and `model` are present and non-empty; `launcher` is a bare name,
+  with no path separator and no leading `-`.
+- `effort`, when present, is one of the five, case-sensitive. Absent is fine.
+- `notes` is a string if given; no entry carries a retired key (`slot`, `id`,
+  `display`).
+- every `model` yields a usable id, and no two entries derive the same one —
+  which, since ids are derived, means no two entries agree on launcher, model
+  and effort.
 - `schema` is an integer no newer than the reader.
 
 Every problem is reported at once, not just the first, because a

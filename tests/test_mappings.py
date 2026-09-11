@@ -24,40 +24,37 @@ from ccd_mappings import manifest as m  # noqa: E402
 FAILURES: list[str] = []
 
 # The worked example from README.md. `run()` re-reads it out of the README and
-# compares, so the two cannot drift apart without this suite saying so. One
-# first-party entry and one remapped entry are the minimum that proves the
-# shape carries both.
+# compares, so the two cannot drift apart without this suite saying so. It
+# carries all four shapes the contract has to handle: first-party with an
+# effort, first-party with none, a remapped model with the `[1m]` suffix, and
+# a remapped model with no effort.
 EXAMPLE = {
     "schema": 1,
     "mappings": [
         {
-            "id": "sonnet-5-medium",
-            "slot": "sonnet",
-            "effort": "medium",
             "launcher": "claude",
             "model": "claude-sonnet-5",
+            "effort": "medium",
         },
         {
-            "id": "opus-5-high",
-            "slot": "opus",
-            "effort": "high",
             "launcher": "claude",
             "model": "claude-opus-5",
-        },
-        {
-            "id": "kimi-k3-max",
-            "slot": "opus",
-            "effort": "max",
-            "launcher": "claude-openrouter",
-            "model": "moonshotai/kimi-k3",
-            "notes": "effort set by hand from benchmark reading; requested, not guaranteed",
-        },
-        {
-            "id": "glm-5.3-flash-high",
-            "slot": "sonnet",
             "effort": "high",
+        },
+        {
+            "launcher": "claude",
+            "model": "claude-haiku-4-5",
+            "notes": "no effort: this model never receives one, so claiming a value would be fiction",
+        },
+        {
             "launcher": "claude-openrouter",
-            "model": "z-ai/glm-5.3-flash",
+            "model": "moonshotai/kimi-k3[1m]",
+            "effort": "max",
+            "notes": "effort set by hand from benchmark reading; [1m] lifts the assumed 200k window",
+        },
+        {
+            "launcher": "claude-openrouter",
+            "model": "deepseek/deepseek-v4.1-flash",
         },
     ],
 }
@@ -72,19 +69,13 @@ def check(name: str, cond: bool, detail: str = "") -> None:
 
 
 def entry(**over) -> dict:
-    base = {
-        "id": "sonnet-5-medium",
-        "slot": "sonnet",
-        "effort": "medium",
-        "launcher": "claude",
-        "model": "claude-sonnet-5",
-    }
+    base = {"launcher": "claude", "model": "claude-sonnet-5", "effort": "medium"}
     base.update(over)
-    return base
+    return {k: v for k, v in base.items() if v is not None}
 
 
-def doc(*entries) -> dict:
-    return {"schema": 1, "mappings": list(entries) or [entry()]}
+def doc(*items) -> dict:
+    return {"schema": 1, "mappings": list(items) or [entry()]}
 
 
 def only(problems: list, needle: str) -> bool:
@@ -109,13 +100,13 @@ def main() -> int:
 
 
 def run(tmp: Path) -> int:
+    readme = Path(__file__).resolve().parent.parent / "README.md"
+    readme_text = readme.read_text(encoding="utf-8")
+
     print("the worked example in README.md is valid:")
     check("example validates clean", m.validate(EXAMPLE) == [],
           repr(m.validate(EXAMPLE)))
-
-    readme = Path(__file__).resolve().parent.parent / "README.md"
-    blocks = re.findall(r"```json\n(.*?)```", readme.read_text(encoding="utf-8"),
-                        re.S)
+    blocks = re.findall(r"```json\n(.*?)```", readme_text, re.S)
     check("README.md carries exactly one json block", len(blocks) == 1,
           f"found {len(blocks)}")
     if len(blocks) == 1:
@@ -128,14 +119,14 @@ def run(tmp: Path) -> int:
           any(e["launcher"] == "claude" for e in EXAMPLE["mappings"]))
     check("it carries a remapped entry (another launcher)",
           any(e["launcher"] != "claude" for e in EXAMPLE["mappings"]))
-    check("every id is unique",
-          len({e["id"] for e in EXAMPLE["mappings"]}) == len(EXAMPLE["mappings"]))
-    check("no entry stores a label", not any(
-        "display" in e for e in EXAMPLE["mappings"]))
-    # README prints what a picker makes of that file. Read it back rather than
-    # restating it here, so the listing cannot drift from the derivation.
-    listing = re.search(r"A picker renders that file as:\n\n```\n(.*?)```",
-                        readme.read_text(encoding="utf-8"), re.S)
+    check("it carries an entry with no effort",
+          any("effort" not in e for e in EXAMPLE["mappings"]))
+    check("no entry stores an id, a label or a slot", not any(
+        k in e for e in EXAMPLE["mappings"] for k in ("id", "display", "slot")))
+
+    # README prints what a picker makes of that file. Read both back rather
+    # than restating them, so neither can drift from the derivation.
+    listing = re.search(r"A picker\nrenders it as:\n\n```\n(.*?)```", readme_text, re.S)
     check("README shows the rendered picker listing", listing is not None)
     if listing:
         shown = [line.split(". ", 1)[1]
@@ -143,70 +134,120 @@ def run(tmp: Path) -> int:
         derived = [m.display(e) for e in EXAMPLE["mappings"]]
         check("the example renders as the listing README publishes",
               shown == derived, f"README {shown!r} != derived {derived!r}")
+    for ident in m.ids(EXAMPLE):
+        check(f"README names the derived id {ident!r}", f"`{ident}`" in readme_text)
 
-    print("\nthe label is derived, so it cannot contradict the fields:")
-    # ADR-0009: a stored label is free text beside the fields it describes —
-    # #10's defect one level down. There is no field and no override.
-    check("'display' is not a required key", "display" not in m.REQUIRED)
-    check("a stored 'display' is ignored, not honoured",
-          m.display(entry(display="Haiku/Low")) == "Sonnet/Medium")
-    check("remapped renders both halves with an arrow",
-          m.display(entry(slot="opus", effort="max",
-                          model="moonshotai/kimi-k3")) == "Opus/Max → kimi-k3")
-    check("first-party collapses, rather than saying it twice",
-          m.display(entry(slot="sonnet", effort="medium",
-                          model="claude-sonnet-5")) == "Sonnet/Medium")
-    # A first-party model naming a different slot than the entry asks for is
-    # worth showing, not hiding, so it does not collapse.
-    check("a first-party model naming another slot does not collapse",
-          m.display(entry(slot="opus", effort="xhigh",
-                          model="claude-sonnet-5")) == "Opus/Xhigh → claude-sonnet-5")
-    check("the provider prefix is dropped",
-          m.display(entry(slot="sonnet", effort="high",
-                          model="z-ai/glm-5.3-flash")) == "Sonnet/High → glm-5.3-flash")
-    # The label has to stay greppable: this same string is the manifest's
-    # `model`, `ccd ls`'s resolved-model column, and the transcript. Restyling
-    # it would need no table but would invent a name.
-    check("the model id is rendered exactly as its provider writes it", all(
-        m.display(entry(slot="opus", effort="max", model=mid)).split("→ ")[1]
-        == mid.rsplit("/", 1)[-1]
-        for mid in ("moonshotai/kimi-k3", "z-ai/glm-5.3-flash", "GLM-4.6",
-                    "deepseek/DeepSeek-V4", "mistral-large-2512")))
-    check("every slot and effort renders title-cased",
-          {m.display(entry(slot=s, effort=e, model="x/y")).split(" ")[0]
-           for s in m.SLOTS for e in m.EFFORTS}
-          == {f"{s.title()}/{e.title()}" for s in m.SLOTS for e in m.EFFORTS})
-    check("an empty model still renders the asked-for pair",
-          m.display({"slot": "haiku", "effort": "low", "model": ""}) == "Haiku/Low")
+    print("\nthe model is named directly; there is no slot:")
+    # ADR-0009's revision: a full provider slug is a valid --model argument, so
+    # the slot was only ever one route to a model. The field is gone, and a
+    # file still carrying it predates this contract.
+    check("'slot' is not a stored key", "slot" not in m.REQUIRED + m.OPTIONAL)
+    check("a leftover 'slot' is refused, not ignored",
+          only(m.validate(doc(entry(slot="opus"))), "'slot' is no longer a field"))
+    check("and the message says to regenerate",
+          "regenerate" in m.validate(doc(entry(slot="opus")))[0])
+    check("a leftover 'id' is refused",
+          only(m.validate(doc(entry(id="sonnet-5-medium"))), "'id' is no longer"))
+    check("a leftover 'display' is refused",
+          only(m.validate(doc(entry(display="Opus/High"))), "'display' is no longer"))
+    check("a provider slug is an ordinary model value",
+          m.validate(doc(entry(model="deepseek/deepseek-v4.1-flash"))) == [])
 
-    print("\nthe closed sets are closed:")
-    for slot in m.SLOTS:
-        check(f"slot {slot!r} accepted", m.validate(doc(entry(slot=slot))) == [])
-    check("slot 'gpt' refused", only(m.validate(doc(entry(slot="gpt"))), "'slot'"))
-    check("slot 'Opus' refused (case matters)",
-          only(m.validate(doc(entry(slot="Opus"))), "'slot'"))
+    print("\neffort is optional, because for some models it is never sent:")
+    check("an entry with no effort is valid",
+          m.validate(doc(entry(effort=None))) == [])
     for effort in m.EFFORTS:
         check(f"effort {effort!r} accepted",
               m.validate(doc(entry(effort=effort))) == [])
     check("effort 'extreme' refused",
           only(m.validate(doc(entry(effort="extreme"))), "'effort'"))
+    check("effort 'Max' refused (case matters)",
+          only(m.validate(doc(entry(effort="Max"))), "'effort'"))
+    # Absent means "none is sent". An empty string is a value that says
+    # nothing, which is the fiction the optional field exists to avoid.
+    check("an empty effort is refused rather than treated as absent",
+          only(m.validate(doc(entry(effort=""))), "omitted entirely"))
+    # `null` is how a transcript records "no effort was sent", so it says the
+    # same thing as an absent key and is accepted as such.
+    check("a null effort means absent, like an omitted key",
+          m.validate(doc({"launcher": "claude", "model": "x",
+                          "effort": None})) == [])
+    check("and renders as an entry with no effort",
+          m.display({"model": "x", "effort": None}) == "x")
 
-    print("\na slot never carries an effort (ADR-0009, the #10 defect one level up):")
-    problems = m.validate(doc(entry(slot="opus/high")))
-    check("slot 'opus/high' is refused", len(problems) == 1, repr(problems))
-    check("and the message says where the effort belongs",
-          problems and "put it in 'effort'" in problems[0], repr(problems))
+    print("\nthe id is derived from model and effort:")
+    check("model plus effort", m.entry_id(entry()) == "claude-sonnet-5-medium")
+    check("model alone when there is no effort",
+          m.entry_id(entry(effort=None)) == "claude-sonnet-5")
+    check("the provider prefix is dropped",
+          m.entry_id(entry(model="moonshotai/kimi-k3", effort="max"))
+          == "kimi-k3-max")
+    check("uppercase is folded down",
+          m.entry_id(entry(model="deepseek/DeepSeek-V4", effort="low"))
+          == "deepseek-v4-low")
+    check("the [1m] suffix survives into the id",
+          m.entry_id(entry(model="moonshotai/kimi-k3[1m]", effort="max"))
+          == "kimi-k3-1m-max")
+    # An entry with the suffix and one without are different mappings; if the
+    # suffix were stripped they would collide and be reported as duplicates.
+    suffixed = doc(entry(model="moonshotai/kimi-k3", effort="max"),
+                   entry(model="moonshotai/kimi-k3[1m]", effort="max"))
+    check("so [1m] and plain are distinct mappings, not a collision",
+          m.validate(suffixed) == [] and len(set(m.ids(suffixed))) == 2,
+          repr(m.ids(suffixed)))
+    check("every derived id matches the id pattern",
+          all(m.ID_RE.match(i) for i in m.ids(EXAMPLE)), repr(m.ids(EXAMPLE)))
+    check("a model yielding no usable id is refused",
+          only(m.validate(doc(entry(model="!!!"))), "usable id"))
 
-    print("\nids are unique and shell-safe:")
-    dupe = m.validate(doc(entry(), entry(display="second")))
-    check("a duplicate id is refused", any("duplicate" in p for p in dupe), repr(dupe))
-    check("the duplicate names both positions",
-          any("mappings[0]" in p for p in dupe), repr(dupe))
-    check("uppercase id refused", only(m.validate(doc(entry(id="Sonnet-5"))), "'id'"))
-    check("id with a space refused", only(m.validate(doc(entry(id="sonnet 5"))), "'id'"))
-    check("id with a slash refused", only(m.validate(doc(entry(id="a/b"))), "'id'"))
-    check("dots allowed (a model version is not a typo)",
-          m.validate(doc(entry(id="glm-5.3-flash-high"))) == [])
+    print("\ncolliding ids take the launcher — all of them, not just the second:")
+    clash = doc(entry(launcher="claude-openrouter", model="moonshotai/kimi-k3",
+                      effort="max"),
+                entry(launcher="claude-alt", model="moonshotai/kimi-k3",
+                      effort="max"))
+    check("both entries carry their launcher",
+          m.ids(clash) == ["kimi-k3-max-claude-openrouter",
+                           "kimi-k3-max-claude-alt"], repr(m.ids(clash)))
+    check("and the file still validates", m.validate(clash) == [])
+    # Order-independence is the point: if only the later entry were renamed,
+    # reordering the file would rename an entry that anything may have recorded.
+    reversed_clash = {"schema": 1, "mappings": list(reversed(clash["mappings"]))}
+    check("reordering the file does not rename anything",
+          sorted(m.ids(clash)) == sorted(m.ids(reversed_clash)),
+          repr(m.ids(reversed_clash)))
+    check("an entry that does not collide keeps the short id",
+          m.ids(doc(entry(launcher="claude-openrouter",
+                          model="moonshotai/kimi-k3", effort="max")))
+          == ["kimi-k3-max"])
+    dupe = doc(entry(), entry(notes="same launcher, model and effort"))
+    check("a true duplicate is refused",
+          any("both derive the id" in p for p in m.validate(dupe)),
+          repr(m.validate(dupe)))
+    check("and it names the entry it duplicates",
+          any("mappings[0]" in p for p in m.validate(dupe)))
+
+    print("\nthe label is derived, so it cannot contradict the fields:")
+    check("model and effort",
+          m.display(entry(model="moonshotai/kimi-k3", effort="max"))
+          == "kimi-k3/max")
+    check("model alone when no effort is sent",
+          m.display(entry(model="deepseek/deepseek-v4.1-flash", effort=None))
+          == "deepseek-v4.1-flash")
+    check("first-party reads the same way",
+          m.display(entry()) == "claude-sonnet-5/medium")
+    check("the [1m] suffix is shown, since it is part of the model asked for",
+          m.display(entry(model="moonshotai/kimi-k3[1m]", effort="max"))
+          == "kimi-k3[1m]/max")
+    check("a stored 'display' is ignored, not honoured",
+          m.display(entry(display="haiku/low")) == "claude-sonnet-5/medium")
+    # The label has to stay greppable: this same string is the manifest's
+    # `model`, `ccd ls`'s resolved-model column, and the transcript. Restyling
+    # it would need no table but would invent a name.
+    check("the model id is rendered exactly as its provider writes it", all(
+        m.display({"model": mid, "effort": "max"}).split("/max")[0]
+        == mid.rsplit("/", 1)[-1]
+        for mid in ("moonshotai/kimi-k3", "z-ai/glm-5.3-flash", "GLM-4.6",
+                    "deepseek/DeepSeek-V4", "mistral-large-2512")))
 
     print("\nlauncher is a bare name, resolved on $PATH at launch:")
     check("a path is refused",
@@ -225,6 +266,8 @@ def run(tmp: Path) -> int:
         check("resolve_launcher rejects a missing launcher", False, "no raise")
     except m.ManifestError as exc:
         check("resolve_launcher rejects a missing launcher", "$PATH" in str(exc))
+        check("and names the mapping by its derived id",
+              "claude-sonnet-5-medium" in str(exc), str(exc))
     check("resolve_launcher finds a real one",
           m.resolve_launcher(entry(launcher="sh")).endswith("sh"))
 
@@ -233,14 +276,13 @@ def run(tmp: Path) -> int:
         missing = {k: v for k, v in entry().items() if k != field}
         check(f"missing {field!r} refused",
               any(f"'{field}'" in p for p in m.validate(doc(missing))))
-        blank = entry(**{field: "  "})
         check(f"blank {field!r} refused",
-              any(f"'{field}'" in p for p in m.validate(doc(blank))))
+              any(f"'{field}'" in p for p in m.validate(doc(entry(**{field: "  "})))))
     check("'notes' is optional", m.validate(doc(entry())) == [])
     check("'notes' must be a string when present",
           only(m.validate(doc(entry(notes=7))), "'notes'"))
     # The file is machine-rendered: a producing layer that learns a new field
-    # must not break every older reader that does not know it yet.
+    # must not break every older reader. Retired keys are the exception.
     check("an unknown entry key is ignored, not refused",
           m.validate(doc(entry(colour="blue"))) == [])
     check("an unknown top-level key is ignored, not refused",
@@ -249,20 +291,18 @@ def run(tmp: Path) -> int:
     print("\nthe envelope:")
     check("a bare array is refused (no schema to version it)",
           only(m.validate([entry()]), "top level"))
-    check("missing 'schema' refused", any("'schema'" in p for p in m.validate(
-        {"mappings": [entry()]})))
+    check("missing 'schema' refused",
+          any("'schema'" in p for p in m.validate({"mappings": [entry()]})))
     check("a future schema refused with an upgrade hint",
           any("upgrade ccd" in p for p in m.validate(
               {"schema": m.SCHEMA + 1, "mappings": [entry()]})))
-    check("an older schema is accepted",
-          m.validate({"schema": 1, "mappings": [entry()]}) == [])
     check("'mappings' must be an array",
           only(m.validate({"schema": 1, "mappings": {}}), "'mappings'"))
     check("an empty 'mappings' is refused",
           only(m.validate({"schema": 1, "mappings": []}), "nothing to pick"))
 
     print("\nevery problem is reported, not just the first:")
-    bad = m.validate(doc(entry(id="Bad", slot="nope", effort="nope")))
+    bad = m.validate(doc(entry(slot="opus", effort="nope", notes=7)))
     check("three faults in one entry give three problems", len(bad) == 3, repr(bad))
 
     print("\nwhere the manifest lives:")
@@ -280,12 +320,14 @@ def run(tmp: Path) -> int:
     print("\nloading:")
     good = write(tmp, "good.json", EXAMPLE)
     loaded = m.load(good)
-    check("a good manifest loads", len(m.entries(loaded)) == 4)
+    check("a good manifest loads", len(m.entries(loaded)) == 5)
     check("file order is presentation order",
-          [e["id"] for e in m.entries(loaded)]
-          == [e["id"] for e in EXAMPLE["mappings"]])
-    check("find() returns the entry", m.find(loaded, "kimi-k3-max")["model"]
-          == "moonshotai/kimi-k3")
+          [e["model"] for e in m.entries(loaded)]
+          == [e["model"] for e in EXAMPLE["mappings"]])
+    check("find() resolves a derived id",
+          m.find(loaded, "kimi-k3-1m-max")["model"] == "moonshotai/kimi-k3[1m]")
+    check("find() resolves an id with no effort in it",
+          m.find(loaded, "claude-haiku-4-5")["model"] == "claude-haiku-4-5")
     check("find() returns None for a stranger", m.find(loaded, "nope") is None)
 
     # "You have not set this up" and "what you set up is wrong" are different
@@ -305,7 +347,7 @@ def run(tmp: Path) -> int:
     except m.ManifestError as exc:
         check("malformed JSON raises ManifestError", "not valid JSON" in str(exc))
 
-    invalid = write(tmp, "invalid.json", doc(entry(slot="gpt", effort="nope")))
+    invalid = write(tmp, "invalid.json", doc(entry(effort="nope", notes=7)))
     try:
         m.load(invalid)
         check("an invalid manifest raises ManifestError", False, "no raise")
