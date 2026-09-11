@@ -45,6 +45,12 @@ mkdir -p "$CCD_TRANSCRIPT_ROOT"
 # roster's `up` column needs, and no session id keeps transcript lookup empty.
 export CLAUDE_PID="$$"
 export CLAUDE_CODE_SESSION_ID=""
+# `ccd pick`/`ccd launch` read this before anything else. Point it at a path
+# that never exists so every pick/launch case here hits the same
+# no-manifest error regardless of whatever this machine's real
+# ~/.config/ccd/mappings.json does or doesn't contain (hosting#131 phase 4)
+# — this instrument must never depend on, or touch, that file.
+export CCD_MAPPINGS="$WORK/mappings.json"
 
 PASS=0
 FAIL=0
@@ -141,6 +147,18 @@ record_case dashboard-help -- dashboard --help
 record_case dashboard-unknown-arg -- dashboard --wat
 record_case dashboard-missing-value -- dashboard --scope
 record_case dashboard-unreachable -- dashboard
+# pick/launch read the manifest before touching the broker at all, so these
+# fail the same way whether the broker is up or down — recorded here rather
+# than duplicated in both sections. The interactive choice/field prompts are
+# deliberately NOT characterised here: they refuse outright whenever stdin is
+# not a terminal (which this script's own stdin never is), and that refusal
+# path plus the successful-choice path are unit-tested directly against a
+# faked stdin in tests/test_pick_launch.py instead.
+record_case pick-usage -- pick extra-argument
+record_case pick-no-manifest -- pick
+record_case launch-no-manifest -- launch
+record_case launch-unknown-arg -- launch --wat
+record_case launch-issue-no-value -- launch some-id --issue
 
 echo "=== broker up ==="
 record_case broker-start -- broker start

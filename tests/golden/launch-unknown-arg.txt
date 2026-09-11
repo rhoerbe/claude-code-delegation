@@ -1,0 +1,6 @@
+argv: ccd launch --wat
+exit: 2
+--- stdout ---
+
+--- stderr ---
+ccd launch: unknown argument: --wat

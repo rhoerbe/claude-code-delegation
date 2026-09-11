@@ -39,10 +39,12 @@ USAGE = """usage: ccd <subcommand> [args]
   ccd release <worker> [--force]
   ccd ls
   ccd dashboard [--scope <handle>] [--json] [--write <path>] [--rates <file>]
+  ccd pick
+  ccd launch [<mapping-id>] [--issue N] [--phase N] [--handle NAME] [-- args]
   ccd ping
   ccd broker start|stop|status
 
-env: CCD_SOCKET, CCD_HANDLE, CCD_PIDFILE"""
+env: CCD_SOCKET, CCD_HANDLE, CCD_PIDFILE, CCD_MAPPINGS"""
 
 
 def _err(msg: str) -> None:
@@ -396,6 +398,303 @@ def cmd_dashboard(argv: list) -> int:
         sys.stdin = saved
 
 
+# ---------------------------------------------------------------------------
+# pick and launch (ADR-0009 in claude-code-delegation, hosting#131 phase 4)
+#
+# `ccd_mappings` is the reader; this is the one place its entries turn into a
+# running session. `pick` only lists and reads a choice — it is deliberately
+# useless for anything else, so it composes: `ccd launch $(ccd pick)`. `launch`
+# does the whole thing: pick (or take an id directly), derive a handle,
+# reserve it, and exec the launcher the entry names.
+#
+# CCD_MAPPING=<id> is the one environment variable a launched session carries
+# for this (replacing CCD_MODEL/CCD_EFFORT from before the manifest existed) —
+# with one variable there is structurally nothing to fall out of sync (#10).
+# ---------------------------------------------------------------------------
+
+def _load_manifest_or_die(command: str):
+    """Load+validate the manifest, or print why and return None.
+
+    Distinguishes "not set up" from "set up wrong" the same way the reader
+    does: FileNotFoundError and ManifestError are different messages to a
+    human, and both are handled the same way by a caller (print, return 1).
+    """
+    from ccd_mappings import manifest as m
+
+    try:
+        return m.load()
+    except FileNotFoundError as exc:
+        _err(f"ccd {command}: {exc}")
+        return None
+    except m.ManifestError as exc:
+        _err(f"ccd {command}: {exc}")
+        return None
+
+
+def _list_mappings(doc) -> list:
+    """(id, label) pairs in presentation order — what a picker shows."""
+    from ccd_mappings import manifest as m
+
+    return list(zip(m.ids(doc), m.labels(doc)))
+
+
+def _prompt_choice(command: str, count: int):
+    """Read a 1-based choice from stdin, or print why and return None.
+
+    stdin not a terminal refuses outright rather than attempting a read: a
+    pipe with no writer yet and a closed pipe are indistinguishable from here
+    without trying, and a picker that might hang invisibly in a non-
+    interactive context (a script, a cron job, a CI run) is worse than one
+    that always refuses there. This means `ccd pick` cannot be driven by a
+    non-interactive pipe at all — script around it with `ccd launch <id>`
+    instead, which needs no picking.
+
+    The listing and prompt go to stderr, never stdout: stdout carries only
+    the final chosen id, so `id=$(ccd pick)` captures exactly that and
+    nothing of the UI around it.
+    """
+    if not sys.stdin.isatty():
+        _err(f"ccd {command}: stdin is not a terminal; pick is interactive "
+             f"only — pass the mapping id directly instead")
+        return None
+    sys.stderr.write(f"choice [1-{count}]: ")
+    sys.stderr.flush()
+    raw = sys.stdin.readline()
+    if raw == "":  # EOF (e.g. Ctrl-D) — a real, if unusual, tty condition
+        _err(f"ccd {command}: no selection made")
+        return None
+    raw = raw.strip()
+    if not raw:
+        _err(f"ccd {command}: no selection made")
+        return None
+    if not raw.isdigit() or not (1 <= int(raw) <= count):
+        _err(f"ccd {command}: '{raw}' is not a valid choice (1-{count})")
+        return None
+    return int(raw)
+
+
+def _prompt_field(command: str, label: str, flag: str):
+    """Read one line of free text from stdin (issue/phase numbers), or print
+    why and return None. Same stdin-must-be-a-terminal rule as
+    `_prompt_choice`, for the same reason."""
+    if not sys.stdin.isatty():
+        _err(f"ccd {command}: stdin is not a terminal; pass {flag} explicitly")
+        return None
+    sys.stderr.write(f"{label}: ")
+    sys.stderr.flush()
+    raw = sys.stdin.readline()
+    if raw == "":
+        _err(f"ccd {command}: no {label} given")
+        return None
+    raw = raw.strip()
+    if not raw:
+        _err(f"ccd {command}: no {label} given")
+        return None
+    return raw
+
+
+def _broker_version_note(broker_version: str, cli_version: str):
+    """A one-line note for a version mismatch, or None when there is none.
+
+    Advisory only: `cmd_launch` prints this and proceeds regardless of which
+    side is ahead. An empty `broker_version` (a broker too old to report one,
+    or a reply shaped unexpectedly) is treated as nothing to compare, not a
+    mismatch — there is no "older"/"newer" to state without a value.
+    """
+    if not broker_version or broker_version == cli_version:
+        return None
+    return (f"broker is {broker_version}, this ccd expects {cli_version}; "
+            "continuing anyway")
+
+
+def cmd_pick(argv: list) -> int:
+    if argv:
+        _err("usage: ccd pick")
+        return 2
+
+    doc = _load_manifest_or_die("pick")
+    if doc is None:
+        return 1
+
+    items = _list_mappings(doc)
+    if not items:
+        _err("ccd pick: the manifest has no mappings")
+        return 1
+
+    for i, (_ident, label) in enumerate(items, start=1):
+        sys.stderr.write(f"{i}. {label}\n")
+    choice = _prompt_choice("pick", len(items))
+    if choice is None:
+        return 2
+
+    print(items[choice - 1][0])
+    return 0
+
+
+def cmd_launch(argv: list) -> int:
+    positional = []
+    issue = None
+    phase = None
+    handle_override = None
+    passthrough: list = []
+    rest = list(argv)
+    while rest:
+        arg = rest[0]
+        if arg == "--":
+            passthrough = rest[1:]
+            rest = []
+        elif arg == "--issue":
+            if len(rest) < 2:
+                return _needs_value("launch", "--issue")
+            issue, rest = rest[1], rest[2:]
+        elif arg == "--phase":
+            if len(rest) < 2:
+                return _needs_value("launch", "--phase")
+            phase, rest = rest[1], rest[2:]
+        elif arg == "--handle":
+            if len(rest) < 2:
+                return _needs_value("launch", "--handle")
+            handle_override, rest = rest[1], rest[2:]
+        elif arg.startswith("-"):
+            _err(f"ccd launch: unknown argument: {arg}")
+            return 2
+        elif not positional:
+            positional.append(arg)
+            rest = rest[1:]
+        else:
+            _err(f"ccd launch: unexpected argument: {arg}")
+            return 2
+
+    from ccd_mappings import manifest as m
+
+    doc = _load_manifest_or_die("launch")
+    if doc is None:
+        return 1
+
+    if positional:
+        ident = positional[0]
+        entry = m.find(doc, ident)
+        if entry is None:
+            _err(f"ccd launch: no mapping '{ident}' in the manifest")
+            return 2
+    else:
+        items = _list_mappings(doc)
+        if not items:
+            _err("ccd launch: the manifest has no mappings")
+            return 1
+        for i, (_id, label) in enumerate(items, start=1):
+            sys.stderr.write(f"{i}. {label}\n")
+        choice = _prompt_choice("launch", len(items))
+        if choice is None:
+            return 2
+        ident, _label = items[choice - 1]
+        entry = m.find(doc, ident)
+
+    if handle_override:
+        handle = handle_override
+    else:
+        # hosting's ADR-0002 shape is <issue>-<phase>-<slotname>-<effort>-
+        # <billing>. Neither slotname nor billing survives here: slotname was
+        # a route to a model (ADR-0009) and does not exist for a remapped
+        # entry (there is no "slot" for moonshotai/kimi-k3), and billing was
+        # inferred from the launcher/profile by the DEPLOYMENT layer, which
+        # this repo deliberately has no visibility into (ADR-0009 "why the
+        # deployment layer produces the file"). Using <issue>-<phase>-<id>
+        # instead: the derived manifest id already encodes model+effort, the
+        # same information slotname+effort carried, without inventing a slot
+        # that does not exist for every entry. This is a real gap against the
+        # ADR as written, not a workaround pretending to comply — reported
+        # upstream rather than papered over here.
+        if issue is None:
+            issue = _prompt_field("launch", "issue", "--issue")
+            if issue is None:
+                return 2
+        if phase is None:
+            phase = _prompt_field("launch", "phase", "--phase")
+            if phase is None:
+                return 2
+        handle = f"{issue}-{phase}-{ident}"
+
+    try:
+        launcher_path = m.resolve_launcher(entry)
+    except m.ManifestError as exc:
+        _err(f"ccd launch: {exc}")
+        return 1
+
+    # Broker version check: mismatch is advisory, never fatal — the same
+    # tolerant precedent hosting's ccd-launch follows for an unreachable
+    # broker (below), extended to a live-but-different-version one. Refusing
+    # here would mean a client and broker deployed one commit apart can no
+    # longer launch anything, which is a worse failure than a stale field.
+    from ccd_broker.broker import VERSION as CLI_VERSION
+
+    try:
+        ping_reply = rpc("ping")
+    except Unreachable:
+        # hosting's ccd-launch tolerates an unreachable broker and uses the
+        # label unreserved rather than refuse to launch — followed here
+        # unchanged: a launch still starts a working Claude Code session even
+        # when ccd coordination is down, it just cannot join a queue.
+        _err(f"ccd launch: broker unreachable at {socket_path()}; "
+             f"launching {handle!r} without reserving it")
+    else:
+        note = _broker_version_note(str(ping_reply.get("version") or ""), CLI_VERSION)
+        if note:
+            _err(f"ccd launch: {note}")
+
+        candidate = handle
+        attempt = 1
+        while True:
+            try:
+                announce_reply = rpc(
+                    "announce",
+                    handle=candidate,
+                    effort=entry.get("effort") or "",
+                    model=entry.get("model") or "",
+                    mapping=ident,
+                    cwd=os.getcwd(),
+                    session=os.environ.get("CLAUDE_CODE_SESSION_ID", ""),
+                    pid=os.environ.get("CLAUDE_PID", ""),
+                    exclusive="1",
+                )
+            except Unreachable:
+                # The broker answered ping a moment ago and is gone now —
+                # same tolerant fallback as the up-front unreachable case.
+                _err(f"ccd launch: broker unreachable at {socket_path()}; "
+                     f"launching {candidate!r} without reserving it")
+                handle = candidate
+                break
+            if announce_reply.get("ok"):
+                handle = candidate
+                break
+            attempt += 1
+            if attempt > 20:
+                _err(f"ccd launch: could not reserve a handle after "
+                     f"{attempt - 1} attempts starting from {handle!r}")
+                return 1
+            candidate = f"{handle}-{attempt}"
+
+    env = dict(os.environ)
+    # CCD_MAPPING replaces CCD_MODEL/CCD_EFFORT (ADR-0009): with one variable
+    # there is structurally nothing left to fall out of sync (#10).
+    env.pop("CCD_MODEL", None)
+    env.pop("CCD_EFFORT", None)
+    env["CCD_MAPPING"] = ident
+    env["CCD_SOCKET"] = socket_path()
+    env["CCD_HANDLE"] = handle
+
+    # Same flag order hosting's ccd-launch exec line uses (--name, --model,
+    # --effort, then passthrough) so the two stay easy to compare.
+    exec_args = [launcher_path, "--name", handle, "--model", entry.get("model") or ""]
+    if entry.get("effort"):
+        exec_args += ["--effort", entry["effort"]]
+    exec_args += passthrough
+
+    os.execve(launcher_path, exec_args, env)
+    _err(f"ccd launch: exec of {launcher_path!r} failed")  # pragma: no cover
+    return 1  # pragma: no cover — os.execve does not return on success
+
+
 def cmd_ping(argv: list) -> int:
     try:
         reply = rpc("ping")
@@ -545,6 +844,8 @@ COMMANDS = {
     "release": cmd_release,
     "ls": cmd_ls,
     "dashboard": cmd_dashboard,
+    "pick": cmd_pick,
+    "launch": cmd_launch,
     "ping": cmd_ping,
     "broker": cmd_broker,
 }

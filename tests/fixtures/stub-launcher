@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+"""Stub launcher for `ccd pick`/`ccd launch` tests (hosting#131 phase 4).
+
+Stands in for a real launcher (`claude`, `claude-openrouter`, ...): accepts
+the same `--model`/`--effort`/`--name` flags ADR-0009 requires every manifest
+launcher to accept, and instead of starting a session, prints what it was
+given as one line of JSON and exits 0. `ccd launch` execs this in place of
+itself (ADR-0002), so this process's stdout and exit code ARE the test's
+observation of what `ccd launch` did.
+
+Installed under whatever name(s) a test's sample manifest expects (copied
+onto a temp $PATH directory — see the `stub_launcher_path` fixture) since one
+script covers every `launcher` value the fixture manifest uses.
+"""
+import json
+import os
+import sys
+
+print(json.dumps({
+    "argv0": sys.argv[0],
+    "args": sys.argv[1:],
+    "CCD_MAPPING": os.environ.get("CCD_MAPPING"),
+    "CCD_HANDLE": os.environ.get("CCD_HANDLE"),
+    "CCD_SOCKET": os.environ.get("CCD_SOCKET"),
+    "CCD_MODEL": os.environ.get("CCD_MODEL"),
+    "CCD_EFFORT": os.environ.get("CCD_EFFORT"),
+}))
