@@ -207,10 +207,10 @@ dishonest one: see
 [ADR-0007](docs/adr/0007-affiliation-is-claimed-not-declared.md) and
 [ADR-0006](docs/adr/0006-one-boundary-uid-authenticates-claims-authorize.md).
 
-`ccd dashboard` is the read-only fleet view: metadata (handle, role, tier,
-claim graph, working tree, status, cost) for **every** announced handle, and
-one bounded content line — a dispatcher's goal, a worker's last task — for the
-**one** handle named by `--scope`, so no rendered view ever holds two clients'
+`ccd dashboard` is the read-only fleet view: metadata (handle, role, model
+slot, claim graph, working tree, status, cost) for **every** announced handle,
+and one bounded content line — a dispatcher's goal, a worker's last task — for
+the **one** handle named by `--scope`, so no rendered view ever holds two clients'
 working material. Content and cost come from each session's own transcript,
 never from the broker, which stores none
 ([ADR-0008](docs/adr/0008-dashboard-is-metadata-wide-content-scoped.md)). See

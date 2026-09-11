@@ -256,9 +256,9 @@ The broker holds no content and forgets a message the moment it is delivered
 content are read from each participant's **own Claude Code transcript**. The
 only thing linking a handle to its transcript is what the session reported when
 it announced: `ccd announce` sends its working directory and
-`$CLAUDE_CODE_SESSION_ID` along with the tier, and the transcript is then named
-deterministically under `~/.claude/projects/`. Nothing about this is verified —
-like `-f` on a send, it is self-asserted
+`$CLAUDE_CODE_SESSION_ID` along with the model slot, and the transcript is then
+named deterministically under `~/.claude/projects/`. Nothing about this is
+verified — like `-f` on a send, it is self-asserted
 ([ADR-0006](docs/adr/0006-one-boundary-uid-authenticates-claims-authorize.md)).
 
 A participant that reported neither — a session on a backend that keeps no such
@@ -267,7 +267,7 @@ table, with `unknown` status and an empty cost. That is the honest answer, not
 a failure.
 
 Cost is reported in tokens. A dollar figure needs prices, which are
-vendor-specific and go stale, so none ship here: pass your own table with
+provider-specific and go stale, so none ship here: pass your own table with
 `--rates`, a JSON object of `{"<model>": {"input": …, "output": …,
 "cache_read": …, "cache_creation": …}}` in USD per million tokens. Any model in
 the fleet that your table does not price leaves the whole figure blank rather
