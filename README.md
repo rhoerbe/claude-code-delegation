@@ -103,12 +103,259 @@ ccd broker stop
 | `CCD_HANDLE` | `ccd recv`/`announce`/`ret` | *(none — required if `<handle>` isn't passed positionally)* | Default handle for `recv`/`announce`/`ret` so a worker's skill/script doesn't have to hardcode it. |
 | `CCD_TRANSCRIPT_ROOT` | `ccd dashboard` | `${CLAUDE_CONFIG_DIR:-~/.claude}/projects` | Where Claude Code keeps per-project transcript directories. The dashboard is the one component that reads them (ADR-0008) — the broker and the rest of the CLI stay backend-agnostic and read no Claude-internal state at all. |
 | `CLAUDE_CODE_SESSION_ID` | `ccd announce` | *(set by Claude Code inside a session; empty elsewhere)* | Passed through to the broker so the dashboard can find that session's transcript. Announcing from a plain shell sends nothing and leaves whatever the session already reported. |
+| `CCD_MAPPINGS` | `ccd` (manifest reader) | `${XDG_CONFIG_HOME:-~/.config}/ccd/mappings.json` | The mapping manifest — see [The mapping manifest](#the-mapping-manifest). Read only by the CLI; the broker never sees it. Absent is not an error until something asks to pick from it. |
 | `CCD_EFFORT` | worker skill (`skills/ccd-worker.md`) convention, not read by `ccd` itself | — | Passed as the `effort` arg to `ccd announce`, so the roster (`ccd ls`) shows other participants which effort each handle carries. Nothing reads it back off the running session, so the `ccd-worker` skill compares it against `$CLAUDE_EFFORT` and warns on a mismatch. Set by whatever launches the session. |
-| `CCD_MODEL` | worker skill (`skills/ccd-worker.md`) convention, not read by `ccd` itself | — | The launcher's model-slot name (e.g. `sonnet`). Local only: it does **not** reach `ccd announce` (broker 1.3 dropped the roster's slot field, claude-code-delegation#13 — a resolved model id and a manifest `mapping` id are its replacements, once phase 2/4's manifest and launcher work exist). Still exported for the `ccd-worker` skill's own self-check, which compares it against the model the session believes itself to be. Set by whatever launches the session. |
+| `CCD_MODEL` | worker skill (`skills/ccd-worker.md`) convention, not read by `ccd` itself | — | The launcher's model-slot name (e.g. `sonnet`). Local only: it does **not** reach `ccd announce` (broker 1.3 dropped the roster's slot field, claude-code-delegation#13 — a resolved model id and a manifest `mapping` id are its replacements, once the manifest and `ccd launch` work exist). Still exported for the `ccd-worker` skill's own self-check, which compares it against the model the session believes itself to be. Set by whatever launches the session. |
 
 The broker itself takes no flags or config file — `$CCD_SOCKET` is its only
 configuration surface (`ccd-broker -h` / `python3 -m ccd_broker -h` for the
 one-line usage).
+
+## The mapping manifest
+
+A **mapping** is one named launch: which launcher runs, which model it is told
+to use, and what effort it requests. A human picks one entry and every other
+value — the id, the label — is derived from it, so there is no second place to
+state the same fact and no way for two statements of it to disagree
+([ADR-0009](docs/adr/0009-a-launch-picks-one-named-mapping.md)).
+
+The manifest is JSON at `${XDG_CONFIG_HOME:-~/.config}/ccd/mappings.json`,
+overridable with `$CCD_MAPPINGS`. **This repo ships no manifest** — populating
+one is a deployment concern, like everything else in *What this repo is not*.
+What is public is the shape, the validation rules, and a reference reader
+([`ccd_mappings/`](ccd_mappings/)) that `ccd` calls.
+
+### Name the model, not a slot
+
+An entry names the model **directly**, as the provider writes it, and that
+string is passed verbatim to `claude --model`. There is no `slot` field and no
+`fable`/`opus`/`sonnet`/`haiku` indirection: a full provider slug works as a
+`--model` argument, so the slot was only ever one way to reach a model, and the
+direct name reaches any model the provider offers rather than the handful a
+launcher happens to have been configured with. [ADR-0009](docs/adr/0009-a-launch-picks-one-named-mapping.md)
+records the probe that settled it.
+
+**effort** is a separate field with one value — `low`, `medium`, `high`,
+`xhigh` or `max` — and it is **optional**, because for some models it does not
+apply at all (see below).
+
+### Effort is requested, not guaranteed — and sometimes not sent
+
+The `effort` in a manifest entry is what will be **asked for**. It is not a
+promise about what runs, and nothing in `ccd` pretends otherwise:
+
+- For some models it is **never sent**. Claude Code drops effort when the model
+  rejects it and stops sending it on subsequent turns. Every `claude-haiku-4-5`
+  transcript on the machine this was checked on records `effort: null` —
+  including sessions launched with an explicit `--effort low` and `--effort
+  xhigh`. **Omit `effort` for those entries**: one claiming a value would be
+  fiction.
+- Claude Code emits effort as a thinking budget, and that budget can be
+  **silently downgraded** server-side for some models.
+- A non-Anthropic backend **reinterprets** it against its own scale. Models
+  reached that way generally advertise a `reasoning`/`reasoning_effort`
+  control, and a provider may cross-map a token budget onto it — but whether
+  an Anthropic-compatible `/v1/messages` hop performs that translation is
+  undocumented, and this project does not guess.
+
+Each entry's effort is therefore set **by hand** by whoever renders the
+manifest, from their own benchmark reading, and left out where it does not
+apply. No component infers it. What a
+session *actually* got is a separate fact, read from `$CLAUDE_EFFORT` (which
+Claude Code sets per turn, after any downgrade) and compared against the
+declared value — requested and observed never collapse into one number.
+
+### Schema
+
+Top level is an object, so the file can be versioned:
+
+| key | type | meaning |
+|---|---|---|
+| `schema` | integer | Schema version. `1` today. A reader refuses a file newer than it understands rather than guessing. |
+| `mappings` | array | The entries, in the order a picker should present them. Must not be empty. |
+
+Each entry:
+
+| key | required | meaning |
+|---|---|---|
+| `launcher` | yes | A **bare command name**, resolved on `$PATH` at launch. Not a path, not a name with arguments. It must accept Claude Code's own `--model`/`--effort`/`--name` flags, since that is how the picked entry reaches the session. Not derivable from anything else: one model is often reachable through more than one launcher. |
+| `model` | yes | The model id, as its provider writes it, passed **verbatim** to `--model` — `claude-sonnet-5`, `moonshotai/kimi-k3`, `deepseek/deepseek-v4.1-flash`. May carry a `[1m]` context suffix, see below. This is also what the roster advertises and what an observed-vs-declared check compares against. |
+| `effort` | no | `low` \| `medium` \| `high` \| `xhigh` \| `max`. Requested, not guaranteed — and **omitted entirely** for models that never receive it. |
+| `notes` | no | Free text for the operator — why this effort, what the benchmark said. Shown as an aside, never as the label. |
+
+That is the whole stored shape. Two keys carry a launch, a third qualifies it
+where it applies, and the fourth is for the human.
+
+**Derived, never stored: the `id` and the label.** Both come from the fields
+above, so neither can contradict them — see [The id is derived](#the-id-is-derived)
+and [The label is derived](#the-label-is-derived).
+
+Unknown keys, at either level, are ignored; **retired keys are refused**.
+Those are two halves of one rule, not an exception to it. Ignoring an unknown
+key buys *forward* compatibility — an older reader survives a newer producer
+that has learned a field. `slot`, `id` and `display` are the backward case:
+known-dead keys from an *older* producer, where silence would let a stale
+manifest validate clean while the intent written into it is dropped on the
+floor. So an entry carrying one is refused, naming the key and saying to
+regenerate the file.
+
+### The `[1m]` context suffix
+
+Any model outside Claude Code's own catalog — which is every third-party slug —
+makes the session assume a **200k context window** for auto-compaction,
+however it was reached. Appending `[1m]` to the model name asks for 1M
+instead, and `CLAUDE_CODE_MAX_CONTEXT_TOKENS` sets an exact value.
+
+Because `model` is passed verbatim, the suffix belongs in that string rather
+than in a field of its own:
+
+```
+{ "launcher": "claude-openrouter", "model": "moonshotai/kimi-k3[1m]", "effort": "max" }
+```
+
+Omitting it is silent: nothing fails, long sessions simply compact early
+against a window smaller than the model actually has. The suffix also survives
+into the derived id (`kimi-k3-1m-max`), so an entry with it and one without are
+distinct mappings rather than a collision.
+
+### The id is derived
+
+An entry's id comes from its **model and effort** — `kimi-k3-max`,
+`deepseek-v4.1-flash` for an entry with no effort — lowercased into one
+shell-safe word, since it becomes `$CCD_MAPPING` in the launched session.
+There is no `id` key: a hand-written one can say `kimi-k3-max` on an entry
+running `high`, which is the same defect as a hand-written label.
+
+Where two entries reach the same model at the same effort through **different
+launchers**, both ids carry their launcher (`kimi-k3-max-claude-openrouter`).
+Both, not just the second — so reordering the file cannot rename an entry.
+Two entries agreeing on launcher, model *and* effort are a true duplicate, and
+that is a validation error.
+
+### The label is derived
+
+A picker shows each entry as a label, computed from `model` and `effort` by
+`ccd_mappings.labels()` — there is no stored field for it and no override. A
+stored label is free text that can disagree with the fields beside it, which is
+issue #10's defect one level down; deriving it makes that disagreement
+unrepresentable rather than merely discouraged. One function means the picker
+and any other renderer cannot diverge either.
+
+| entry | label |
+|---|---|
+| model `moonshotai/kimi-k3`, effort `max` | `kimi-k3/max` |
+| model `deepseek/deepseek-v4.1-flash`, no effort | `deepseek-v4.1-flash` |
+| model `claude-sonnet-5`, effort `medium` | `claude-sonnet-5/medium` |
+
+**Model ids are shown as their provider writes them**, shortened to the last
+path segment and otherwise untouched. Restyling them would need no table but
+would invent a name — `glm-5.3-flash` is not `Glm-5.3-Flash` to anyone — and
+the label would stop matching the string a reader meets everywhere else: the
+manifest's own `model`, `ccd ls`, the transcript. Rendering it verbatim keeps
+the label greppable and needs no knowledge of model families.
+
+An entry with no effort shows the model alone, which is the honest rendering:
+there is no value to display because none is sent.
+
+**Labels disambiguate exactly as ids do.** A label exists so a human can choose
+from it, so two identical rows in a picker mean the choice cannot be made from
+the label at all. Where entries share a label, each member of that group
+carries its launcher — all of them, so file order cannot change what an entry
+is called, and the label stays in lockstep with the id:
+
+```
+kimi-k3/max                            kimi-k3-max                      (alone)
+kimi-k3/max (claude-openrouter)        kimi-k3-max-claude-openrouter    (colliding)
+kimi-k3/max (claude-alt)               kimi-k3-max-claude-alt           (colliding)
+```
+
+Appending the launcher *always* was rejected: it would make every label
+noisier — `claude-sonnet-5/medium (claude)` — to fix a case that usually does
+not arise. That is why the label is derived over the whole file rather than
+from one entry; the id already needs the file for the same reason.
+
+If an entry needs a human aside, that is what `notes` is for — and `notes` is
+visibly not the label, which is the difference that matters.
+
+### Worked example
+
+Three first-party entries (bare `claude`), one of them with no effort because
+its model never receives one, and two reached through a remapped launcher —
+one carrying the `[1m]` suffix. `claude-openrouter` here is an illustrative
+name only; real launcher names live in the deployment layer, not in this repo:
+
+```json
+{
+  "schema": 1,
+  "mappings": [
+    {
+      "launcher": "claude",
+      "model": "claude-sonnet-5",
+      "effort": "medium"
+    },
+    {
+      "launcher": "claude",
+      "model": "claude-opus-5",
+      "effort": "high"
+    },
+    {
+      "launcher": "claude",
+      "model": "claude-haiku-4-5",
+      "notes": "no effort: this model never receives one, so claiming a value would be fiction"
+    },
+    {
+      "launcher": "claude-openrouter",
+      "model": "moonshotai/kimi-k3[1m]",
+      "effort": "max",
+      "notes": "effort set by hand from benchmark reading; [1m] lifts the assumed 200k window"
+    },
+    {
+      "launcher": "claude-openrouter",
+      "model": "deepseek/deepseek-v4.1-flash"
+    }
+  ]
+}
+```
+
+Nothing in that file states an id or a label; both are derived. A picker
+renders it as:
+
+```
+1. claude-sonnet-5/medium
+2. claude-opus-5/high
+3. claude-haiku-4-5
+4. kimi-k3[1m]/max
+5. deepseek-v4.1-flash
+```
+
+with ids `claude-sonnet-5-medium`, `claude-opus-5-high`, `claude-haiku-4-5`,
+`kimi-k3-1m-max` and `deepseek-v4.1-flash`.
+
+### Validation, and where it lives
+
+**In the reader, never in the broker.** The broker treats roster text as opaque
+and learns no Claude Code vocabulary ([ADR-0004](docs/adr/0004-one-transport-behind-a-seam.md)),
+which is what lets it stay agnostic about backends that do not exist yet.
+`ccd` checks, when it loads the file:
+
+- `launcher` and `model` are present and non-empty; `launcher` is a bare name,
+  with no path separator and no leading `-`.
+- `effort`, when present, is one of the five, case-sensitive. Absent is fine.
+- `notes` is a string if given; no entry carries a retired key (`slot`, `id`,
+  `display`).
+- every `model` yields a usable id, and no two entries derive the same one —
+  which, since ids are derived, means no two entries agree on launcher, model
+  and effort.
+- `schema` is an integer no newer than the reader.
+
+Every problem is reported at once, not just the first, because a
+machine-rendered file is fixed by regenerating it, not by a round trip per
+fault. Two things are deliberately *not* load-time errors: a **missing** file
+(that is "not set up yet", distinct from "set up wrong", and only matters when
+something asks to pick from it), and a launcher that is **not installed** —
+shape is host-independent, so availability is resolved at launch instead, which
+lets a controller validate a manifest it renders for a host whose launchers it
+does not have.
 
 ## Quick usage example
 
@@ -246,6 +493,9 @@ Full protocol semantics (wire format, blocking/dequeue-on-ack, the
   `tests/ccd_smoke.sh`.
 - [`tests/test_affiliation.py`](tests/test_affiliation.py),
   [`tests/test_deliver_ack.py`](tests/test_deliver_ack.py),
-  [`tests/test_dashboard.py`](tests/test_dashboard.py) — claim-based
-  affiliation, dequeue-on-ack, and the dashboard. Each is a plain script with
-  no test framework; run it directly.
+  [`tests/test_dashboard.py`](tests/test_dashboard.py),
+  [`tests/test_mappings.py`](tests/test_mappings.py) — claim-based
+  affiliation, dequeue-on-ack, the dashboard, and the mapping manifest
+  contract. Each is a plain script with no test framework; run it directly.
+  They define no `test_*` functions, so a `pytest` invocation collects nothing
+  and passes quietly.
