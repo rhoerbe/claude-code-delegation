@@ -2,6 +2,8 @@
 .venv/
 __pycache__/
 *.egg-info/
+# `uv build` output; releases are built from a tag, never committed.
+/dist/
 
 # node deps — anywhere (root-level tooling + web/ Vite+Svelte client)
 node_modules/
