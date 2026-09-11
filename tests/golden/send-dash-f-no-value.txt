@@ -1,0 +1,6 @@
+argv: ccd send a b -f
+exit: 2
+--- stdout ---
+
+--- stderr ---
+ccd send: -f needs a value

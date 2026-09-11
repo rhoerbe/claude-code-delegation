@@ -1,0 +1,6 @@
+argv: ccd recv w1 -t
+exit: 2
+--- stdout ---
+
+--- stderr ---
+ccd recv: -t needs a value

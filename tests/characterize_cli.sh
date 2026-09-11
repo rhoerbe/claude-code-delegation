@@ -113,6 +113,12 @@ record_case send-usage -- send
 record_case send-one-arg -- send only
 record_case send-unknown-arg -- send a b --wat
 record_case send-unreachable -- send a b -f c
+# The bash implementation looped forever on a flag whose value is missing
+# (`shift 2` with one argument left fails quietly under `set -u`), so these two
+# have no golden from it — an infinite loop is not a surface worth freezing.
+# They are a usage error here, and this is the deliberate deviation.
+record_case send-dash-f-no-value -- send a b -f
+record_case recv-dash-t-no-value -- recv w1 -t
 record_case recv-no-handle -- recv
 record_case recv-unknown-flag -- recv -x
 record_case recv-two-positionals -- recv a b
