@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ccd"
+description = "A local broker letting interactive Claude Code sessions on different backends hand tasks to each other"
+readme = "README.md"
+license = { file = "LICENSE" }
+# 3.11 is the floor rather than the version in use: both hosts run 3.13, and
+# nothing here needs anything newer than `X | None` annotations and
+# `Path.unlink(missing_ok=...)`.
+requires-python = ">=3.11"
+# The version the broker reports on `ccd ping` is the version of the
+# distribution. One number, read from the one place that already had it.
+dynamic = ["version"]
+# Stdlib only, deliberately (PLAN-ccd-v2.md §10): the broker must install on a
+# host with nothing but python3, and a dependency is a thing that can fail to
+# resolve at the moment you most need the broker up.
+dependencies = []
+
+[project.scripts]
+ccd = "ccd_cli.cli:main"
+ccd-broker = "ccd_broker.__main__:main"
+ccd-dashboard = "ccd_dashboard.__main__:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.hatch.version]
+path = "ccd_broker/broker.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["ccd_broker", "ccd_cli", "ccd_dashboard", "ccd_mappings"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "ccd_broker", "ccd_cli", "ccd_dashboard", "ccd_mappings",
+  "tests", "docs", "README.md", "USAGE.md", "LICENSE",
+  "PLAN-ccd-v2.md", "PRD.md", "skills",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The suites here print their own ok/FAIL lines; -q keeps pytest's own output
+# from competing with them.
+addopts = "-q"

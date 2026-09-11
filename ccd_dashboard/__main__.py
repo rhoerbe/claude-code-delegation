@@ -15,9 +15,12 @@ import sys
 from . import dashboard
 
 
-def main(argv: list) -> int:
+def main(argv: list | None = None) -> int:
+    # `None` for the `ccd-dashboard` console script, which passes nothing;
+    # an explicit list from `ccd dashboard` and from the suites.
+    argv = sys.argv[1:] if argv is None else argv
     parser = argparse.ArgumentParser(
-        prog="python3 -m ccd_dashboard",
+        prog="ccd-dashboard",
         description="Render the ccd fleet dashboard from a roster reply on stdin.")
     parser.add_argument("--roster", default="-",
                         help="file holding the roster reply JSON (default: stdin)")
