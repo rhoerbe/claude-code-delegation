@@ -108,6 +108,14 @@ def build(roster: list, scope: Optional[str] = None, *,
         session = {
             "handle": handle,
             "role": _role(str(handle), roster),
+            # "model" is the *resolved* id (e.g. claude-sonnet-5, or an
+            # OpenRouter slug) — usually still empty today, since nothing
+            # upstream of the manifest/launcher work (#13 phase 2/4) can
+            # supply it yet. No "slot" alongside it: the roster tried that
+            # (fable/opus/sonnet/haiku, what this key briefly called "model"
+            # before broker 1.3 stopped overloading that name) and dropped
+            # it again before release — a live probe showed naming a model
+            # directly reaches it exactly as well as a slot alias.
             "model": entry.get("model") or None,
             "effort": entry.get("effort") or None,
             "owner": entry.get("owner") or None,
@@ -244,13 +252,13 @@ def render_markdown(model: dict, now: Optional[float] = None) -> str:
                      "| last activity | cost | tree |")
         lines.append("|---|---|---|---|---|---|---|---|")
         for session in sessions:
-            slot = "/".join(x for x in (session["model"], session["effort"]) if x)
+            tier = "/".join(x for x in (session["model"], session["effort"]) if x)
             lines.append(
-                "| `{handle}` | {role} | {slot} | {owner} | {status} "
+                "| `{handle}` | {role} | {tier} | {owner} | {status} "
                 "| {ago} | {cost} | {tree} |".format(
                     handle=session["handle"],
                     role=session["role"],
-                    slot=slot or "—",
+                    tier=tier or "—",
                     owner=f"`{session['owner']}`" if session["owner"] else "—",
                     status=session["status"],
                     ago=_ago(session["last_activity"], now),

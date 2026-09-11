@@ -190,8 +190,24 @@ cmd_announce() {
   # the transcript `ccd dashboard` reads its status/cost/content from
   # (ADR-0008). $CLAUDE_CODE_SESSION_ID is set inside a Claude Code session and
   # empty anywhere else, in which case the broker keeps whatever it already had.
-  local rpc_args=(announce "handle=$handle" "model=$model" "effort=$effort"
-                  "cwd=$PWD" "session=${CLAUDE_CODE_SESSION_ID:-}")
+  #
+  # $model — the CLI's positional slot argument (fable/opus/sonnet/haiku) —
+  # is deliberately sent NOWHERE on the wire (claude-code-delegation#13,
+  # second pass): the broker's `slot` field it used to feed was dropped
+  # before release (a live probe showed naming a model directly reaches it
+  # exactly as well), and stuffing a slot name into the broker's `model`
+  # field instead would just reintroduce the same conflation this whole
+  # change exists to end — "sonnet" is not a resolved model id. The outward
+  # CLI surface stays frozen (ccd_smoke.sh depends on the 3-positional
+  # shape), so the positional stays and is still used in the status message
+  # below; it simply has no wire destination until phase 4 gives `ccd
+  # launch` a manifest to resolve it through. $CLAUDE_PID is the announcing
+  # session's own top-level process id, set inside Claude Code and empty
+  # anywhere else — the broker treats an empty pid as "no pid", exactly like
+  # a plain shell participant, so it is never reaped for staleness.
+  local rpc_args=(announce "handle=$handle" "effort=$effort"
+                  "cwd=$PWD" "session=${CLAUDE_CODE_SESSION_ID:-}"
+                  "pid=${CLAUDE_PID:-}")
   [ -n "$exclusive" ] && rpc_args+=("exclusive=1")
 
   local reply
@@ -275,25 +291,84 @@ cmd_release() {
   _ccd_ok_or_err "$reply" "released $worker"
 }
 
+# ccd ls: the roster, plus what the broker cannot know on its own.
+#
+# Columns: handle, effort, owner, then model/pid/status/drift appended —
+# NOT handle/slot/effort/owner as originally shipped in this same 1.3.0: a
+# live probe (claude-code-delegation#13, second pass) showed naming a model
+# directly reaches it exactly as well as routing through a slot alias, so
+# `slot` was dropped from the schema before anything shipped, and this
+# column goes with it rather than printing something with nothing left to
+# hold. Nothing has been released with the slotted shape, so there is no
+# backward compatibility to preserve here — hosting's ccd_overview.py (the
+# one real column-index consumer) is updated in the same change.
+#
+# Deliberately NO header row: a column-index consumer here treats every
+# non-blank, non-"(no workers announced)" line as one worker's data (the
+# whole reason 3-vs-4-column pre-1.1.0/1.1.0 rosters were both just
+# "accepted" rather than version-sniffed), so a header would misparse as a
+# fake worker literally named "HANDLE".
+#
+# pid/status come straight from the roster reply (the broker already
+# resolved liveness — see broker.py's module docstring, "Liveness and
+# reaping"). drift is NOT the broker's to know (ADR-0003: it holds no
+# transcript access) — this is computed here, the same way `ccd dashboard`
+# does, by reading the announced session's own transcript
+# (ccd_dashboard.transcript, ADR-0008) and comparing what it shows against
+# what was declared. The roster itself is never touched by what is found.
 cmd_ls() {
   local reply
   reply="$(_ccd_rpc roster)" || {
     echo "ccd ls: broker unreachable at $CCD_SOCKET" >&2
     return 1
   }
-  _ccd_fmt "$reply" "
-if not d.get('ok'):
-    print('ccd ls: ' + str(d.get('reason', 'error')), file=sys.stderr)
+  local root
+  root="$(_ccd_repo_root)"
+  PYTHONPATH="$root${PYTHONPATH:+:$PYTHONPATH}" python3 - "$reply" <<'PYEOF'
+import json
+import sys
+
+from ccd_dashboard import transcript as tx
+
+d = json.loads(sys.argv[1])
+if not d.get("ok"):
+    print("ccd ls: " + str(d.get("reason", "error")), file=sys.stderr)
     sys.exit(1)
-workers = d.get('workers') or []
+
+workers = d.get("workers") or []
 if not workers:
-    print('(no workers announced)')
-else:
-    for w in workers:
-        owner = w.get('owner') or '-'
-        print(str(w.get('handle')) + '\t' + str(w.get('model')) + '\t'
-              + str(w.get('effort')) + '\t' + str(owner))
-"
+    print("(no workers announced)")
+    sys.exit(0)
+
+for w in workers:
+    handle = str(w.get("handle"))
+    effort = w.get("effort") or "-"
+    owner = w.get("owner") or "-"
+    model = w.get("model") or "-"
+    pid = w.get("pid")
+    alive = w.get("alive")
+    if pid is None:
+        pid_col, status = "-", "-"
+    else:
+        pid_col, status = str(pid), ("up" if alive else "dead")
+
+    # Observed values come from the session's own transcript, never from the
+    # broker (ADR-0003/0008) — located the same way `ccd dashboard` does.
+    # `!` never fires on a field that was never declared: an undeclared
+    # `model` (nothing upstream can supply it yet) is not a discrepancy,
+    # it's simply unknown.
+    drift = ""
+    located = tx.locate(w.get("cwd"), w.get("session"))
+    if located:
+        facts = tx.parse(located.path)
+        declared_effort, declared_model = w.get("effort") or None, w.get("model") or None
+        if facts.effort and declared_effort and facts.effort != declared_effort:
+            drift = "!"
+        elif facts.model and declared_model and facts.model != declared_model:
+            drift = "!"
+
+    print("\t".join([handle, effort, owner, model, pid_col, status, drift]))
+PYEOF
 }
 
 # ccd dashboard [--scope <handle>] [--json] [--write <path>] [--rates <file>]

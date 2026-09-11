@@ -10,29 +10,70 @@ State (all in-memory, no persistence — a broker restart means empty queues and
 an empty roster; workers re-`announce` on their next start):
 
     queues:  <handle> -> [msg, msg, ...]     FIFO, one deque per handle
-    roster:  <handle> -> {model, effort, owner, cwd, session}
+    roster:  <handle> -> {effort, model, pid, mapping,
+                          owner, cwd, session}
                                              owner=None until claimed;
-                                             cwd/session None unless announced
+                                             cwd/session None unless announced;
+                                             pid None for a non-process
+                                             participant (a plain shell) —
+                                             see "Liveness and reaping" below
 
 Wire model — one logical request per connection, line-delimited JSON:
 
     -> {"method": "send", "args": {"to": "w1", "msg": "hi", "from": "disp"}}
     <- {"ok": true, "id": "m1"}
 
-| method   | args                    | reply                                     |
-|----------|-------------------------|-------------------------------------------|
-| send     | {to, msg, from?}        | {ok:true, id}                             |
-| recv     | {handle, timeout?}      | {ok:true, from, msg} / {ok:false,         |
-|          |                         |  reason:"timeout"}          *blocking*    |
-| announce | {handle, model, effort, | {ok:true} / {ok:false} if the handle is   |
-|          |  cwd?, session?,        |  live with a different model/effort, or   |
-|          |  exclusive?, force?}    |  live at all when exclusive               |
-| retire   | {handle}                | {ok:true}  (releases anything it claimed) |
-| claim    | {handle, owner, force?} | {ok:true} / {ok:false} if already claimed |
-| release  | {handle, owner?}        | {ok:true}                                 |
-| roster   | {}                      | {ok:true, workers:[{handle,model,effort,  |
-|          |                         |  owner,cwd,session}]}                     |
-| ping     | {}                      | {ok:true, version, started_at}            |
+| method   | args                    | reply                                      |
+|----------|-------------------------|---------------------------------------------|
+| send     | {to, msg, from?}        | {ok:true, id}                              |
+| recv     | {handle, timeout?}      | {ok:true, from, msg} / {ok:false,          |
+|          |                         |  reason:"timeout"}          *blocking*     |
+| announce | {handle, effort,        | {ok:true} / {ok:false} if the handle is    |
+|          |  model?, pid?, mapping?,|  live with a different effort, or          |
+|          |  cwd?, session?,        |  live at all when exclusive                |
+|          |  exclusive?, force?}    |                                             |
+| retire   | {handle}                | {ok:true}  (releases anything it claimed)  |
+| claim    | {handle, owner, force?} | {ok:true} / {ok:false} if already claimed  |
+| release  | {handle, owner?}        | {ok:true}                                  |
+| roster   | {}                      | {ok:true, workers:[{handle,effort,         |
+|          |                         |  model,pid,mapping,alive,owner,cwd,        |
+|          |                         |  session}]}                                |
+| ping     | {}                      | {ok:true, version, started_at}             |
+
+Vocabulary (claude-code-delegation#13): "model slot" (`fable`/`opus`/`sonnet`/
+`haiku`) is a naming convention used ABOVE this layer — the manifest/launcher
+that maps a slot to a concrete model — but the broker does not store it as a
+field. It did, briefly, in this same 1.3.0 (never released): a live probe
+settled it after — passing a full model id straight to `--model` reached the
+model exactly as well as naming a slot Claude Code resolves through
+`ANTHROPIC_DEFAULT_*_MODEL` (identical catalog warning, identical assumed
+context window). Once a launch already names its model, a roster `slot` would
+hold either an alias whose resolved value is already in `model` (a
+first-party launch) or nothing meaningful (a manifest launch, which names a
+`mapping` entry instead) — vestigial either way, so it was dropped before
+anything shipped. What the broker actually carries: `effort` (required, one
+value) and `model` (optional — the *resolved* id, e.g. `claude-sonnet-5` or an
+OpenRouter slug; typically still empty, since nothing upstream of phase 2/4's
+manifest and launcher work can supply it yet). Neither is validated by the
+broker — that happens where the manifest is read (phase 2).
+
+Liveness and reaping (#13): `pid` is the announcing session's own top-level
+process id (`$CLAUDE_PID` inside Claude Code). A `roster` read lazily reaps —
+sound because the broker's socket is per-host and per-uid, so `/proc` is
+authoritative for every handle it can hold: an entry whose `pid` is set but
+whose `/proc/<pid>` is gone is returned ONE LAST TIME with `alive: false`,
+then deleted before the *next* read sees it. A stale entry is not cosmetic —
+it makes a dispatcher route work to a queue nobody drains (a silent hang),
+and `announce --exclusive` then refuses to reuse the name — which is how a
+`w1` outlived its session by hours. An entry with `pid: null` (a plain-shell
+participant, never a traceable process) is never reaped: `alive` reads
+`null` for it, not `false`, because there is nothing to check.
+
+Drift (#13) is never computed or stored here: the broker holds no transcript
+access (ADR-0003) and no opinion about what actually ran. `ccd ls` computes
+it itself by reading the same transcript the dashboard does (ADR-0008) and
+comparing to the declared `effort`/`model` — the roster is never mutated by
+what it finds there.
 
 Affiliation (ADR-0007): a worker announces *unowned*; a dispatcher `claim`s it,
 exclusively and atomically. The broker then refuses a **dispatcher's** `send` to
@@ -61,12 +102,17 @@ and no task is lost. See `Broker._recv` and `ClientContext.deliver`.
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from collections import deque
 from typing import Any, Callable, Optional, Protocol, runtime_checkable
 
-VERSION = "1.2.0"  # 1.2: announce carries cwd/session for the dashboard (ADR-0008)
+# 1.3: model/pid/mapping replace the overloaded "model" (a resolved id now,
+# not a slot alias — "slot" was tried and dropped before release, see the
+# module docstring's Vocabulary section); roster reads lazily reap a dead
+# pid (claude-code-delegation#13).
+VERSION = "1.3.0"
 
 #: `recv` timeout when the client does not supply one (24h — a parked worker).
 DEFAULT_RECV_TIMEOUT = 86400.0
@@ -212,8 +258,30 @@ class Broker:
         handle = args.get("handle")
         if not _is_handle(handle):
             return _err("announce requires a non-empty string 'handle'")
-        model = _as_text(args.get("model"))
+        # Required — the declared identity a re-announce is checked against
+        # below. No `slot` alongside it: dropped from this schema before
+        # anything shipped (module docstring's Vocabulary section, #13) once
+        # a live probe showed naming a model directly reaches it exactly as
+        # well as routing through a slot alias.
         effort = _as_text(args.get("effort"))
+        # The resolved model id (e.g. claude-sonnet-5, or an OpenRouter
+        # slug) and which manifest entry produced this launch. Both optional
+        # and unvalidated — nothing upstream can supply them yet (phase 2/4's
+        # manifest and launcher work), and a hand-launched session simply
+        # omits them. Carried forward on an omitted re-announce, same
+        # rationale as cwd/session below: a plain re-announce that cannot
+        # resupply them must not blank what a richer announcer once reported.
+        model = _as_opt_text(args.get("model"))
+        mapping = _as_opt_text(args.get("mapping"))
+        # This announcer's own top-level process id ($CLAUDE_PID inside
+        # Claude Code), for the liveness/reaping `roster` performs (module
+        # docstring). Unlike model/mapping this is NOT carried forward when
+        # omitted: a stale pid inherited from a *different* process that
+        # happened to reuse this handle would misreport that process's
+        # liveness, not this one's. Omitted (or unparsable) simply means "no
+        # pid for this registration" — None, same as a plain shell that never
+        # had one.
+        pid = _as_opt_int(args.get("pid"))
         # Where this session lives and which transcript is its own. Optional,
         # unvalidated, and never read by the broker — they exist so `roster`
         # can hand the dashboard something to correlate a handle with
@@ -224,8 +292,8 @@ class Broker:
         force = bool(args.get("force"))
         # `exclusive` is for a caller that KNOWS it is starting a new session
         # — a launcher reserving a name before exec. For it, an identical
-        # model/effort is not the idempotent re-announce below but a genuine
-        # collision: two workers of the same model slot on the same issue and
+        # effort is not the idempotent re-announce below but a genuine
+        # collision: two workers of the same effort on the same issue and
         # phase is precisely the case the launcher's ordinal suffix exists for,
         # and the broker cannot tell the two apart on its own (there is no
         # session identity). Announcing without it stays idempotent, so an
@@ -236,28 +304,33 @@ class Broker:
             if live is not None and exclusive and not force:
                 return _err(
                     f"handle '{handle}' is already announced "
-                    f"({live['model']}/{live['effort']})"
+                    f"(effort {live['effort']})"
                 )
             if live is not None and not force:
                 # Idempotent re-announce is the common case and must keep
                 # working: a session Esc-interrupted mid-park re-announces the
-                # same handle at the same model slot, and locking it out of
-                # its own identity would be worse than the hijack this guards
-                # against. A *different* slot means a different session took
+                # same handle at the same effort, and locking it out of its
+                # own identity would be worse than the hijack this guards
+                # against. A *different* effort means a different session took
                 # the name, which is the accident worth catching. Forgery is
                 # out of scope (ADR-0006) — an impostor announcing an
-                # identical slot is indistinguishable from the real thing and
-                # always will be.
-                if live["model"] != model or live["effort"] != effort:
+                # identical effort is indistinguishable from the real thing
+                # and always will be. `model` is NOT part of this check: it is
+                # optional and carried forward when omitted (below), so an
+                # announce that simply doesn't repeat it must not read as a
+                # different session — the same reason cwd/session aren't part
+                # of this check either.
+                if live["effort"] != effort:
                     return _err(
-                        f"handle '{handle}' is already announced as "
-                        f"{live['model']}/{live['effort']}; retire it first, "
-                        f"or pass force"
+                        f"handle '{handle}' is already announced at effort "
+                        f"{live['effort']}; retire it first, or pass force"
                     )
             self._roster[handle] = {
                 "handle": handle,
-                "model": model,
                 "effort": effort,
+                "model": model if model is not None else (live.get("model") if live else None),
+                "pid": pid,
+                "mapping": mapping if mapping is not None else (live.get("mapping") if live else None),
                 # A re-announce must not silently drop an existing claim.
                 "owner": live.get("owner") if live else None,
                 # Nor drop a known cwd/session because the re-announce came
@@ -343,8 +416,33 @@ class Broker:
         return {"ok": True, "handle": handle}
 
     def _m_roster(self, args: dict, ctx: Optional[ClientContext]) -> Optional[dict]:
+        """Lazily reap a dead pid: see "Liveness and reaping" in the module
+        docstring. An entry is shown dead ONCE — the read that discovers
+        it — then deleted before any later read can see it again.
+        """
         with self._cond:
-            workers = [dict(e) for _, e in sorted(self._roster.items())]
+            dead: list[str] = []
+            workers = []
+            for handle, entry in sorted(self._roster.items()):
+                e = dict(entry)
+                pid = e.get("pid")
+                if pid is None:
+                    e["alive"] = None  # nothing to check — never reaped
+                elif _proc_exists(pid):
+                    e["alive"] = True
+                else:
+                    e["alive"] = False
+                    dead.append(handle)
+                workers.append(e)
+            for handle in dead:
+                self._roster.pop(handle, None)
+                # A dead dispatcher's claims are exactly as stuck as one that
+                # exited without retiring (_m_retire's cascade) — free them
+                # the same way, rather than leaving workers held by a
+                # claimant that will never release them itself.
+                for entry in self._roster.values():
+                    if entry.get("owner") == handle:
+                        entry["owner"] = None
         return {"ok": True, "workers": workers}
 
     def _m_ping(self, args: dict, ctx: Optional[ClientContext]) -> Optional[dict]:
@@ -451,6 +549,36 @@ def _as_opt_text(value: Any) -> Optional[str]:
         return None
     text = str(value)
     return text or None
+
+
+def _as_opt_int(value: Any) -> Optional[int]:
+    """A pid, or None for a missing/empty/unparsable one.
+
+    Same "" == absent convention as `_as_opt_text` (the CLI's flat wire
+    encoding is all-strings), but a pid that fails to parse as an int is
+    treated as absent too rather than raising — a malformed pid is not
+    grounds for the whole announce to fail (#13: an accident this is meant
+    to catch, not one it should itself cause).
+    """
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _proc_exists(pid: int) -> bool:
+    """Is `/proc/<pid>` present? The one liveness check this module needs.
+
+    Sound because ccd's socket is per-host and per-uid (PLAN §5.1): every
+    handle a broker can hold was announced by a process on the *same* host
+    under the *same* uid, so /proc is authoritative for it — no pid
+    namespace or container boundary can put a foreign process's pid in view
+    here. Does not distinguish a zombie (reaped by its own parent, not this
+    module's concern) from a running process — out of scope for #13.
+    """
+    return os.path.exists(f"/proc/{pid}")
 
 
 def serve(transport_factory: Callable[[Broker], Transport]) -> None:

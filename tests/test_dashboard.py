@@ -153,7 +153,7 @@ def run(tmp: Path) -> int:
 
     print("announce carries cwd and session (the only handle->transcript link):")
     b = Broker()
-    call(b, "announce", handle="w1", model="sonnet", effort="medium",
+    call(b, "announce", handle="w1", effort="medium",
          cwd="/work/beta", session="s-w1")
     entry = (call(b, "roster").get("workers") or [{}])[0]
     check("roster reports cwd", entry.get("cwd") == "/work/beta", repr(entry))
@@ -161,20 +161,20 @@ def run(tmp: Path) -> int:
     call(b, "claim", handle="w1", owner="disp")
     # A re-announce from a plain shell has no $CLAUDE_CODE_SESSION_ID and sends
     # an empty string; that must not blank what the session already reported.
-    call(b, "announce", handle="w1", model="sonnet", effort="medium",
+    call(b, "announce", handle="w1", effort="medium",
          cwd="", session="")
     entry = (call(b, "roster").get("workers") or [{}])[0]
     check("an empty re-announce preserves cwd/session",
           entry.get("cwd") == "/work/beta" and entry.get("session") == "s-w1",
           repr(entry))
     check("and still preserves the claim", entry.get("owner") == "disp")
-    call(b, "announce", handle="w1", model="sonnet", effort="medium",
+    call(b, "announce", handle="w1", effort="medium",
          cwd="/work/moved", session="s-new")
     entry = (call(b, "roster").get("workers") or [{}])[0]
     check("a re-announce that supplies them updates both",
           entry.get("cwd") == "/work/moved" and entry.get("session") == "s-new",
           repr(entry))
-    call(b, "announce", handle="w9", model="sonnet", effort="medium")
+    call(b, "announce", handle="w9", effort="medium")
     entry = next(e for e in call(b, "roster")["workers"] if e["handle"] == "w9")
     check("a participant that announces neither is simply unlocated",
           entry.get("cwd") is None and entry.get("session") is None, repr(entry))
