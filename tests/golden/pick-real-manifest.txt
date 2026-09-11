@@ -1,0 +1,9 @@
+argv: ccd pick
+exit: 2
+--- stdout ---
+
+--- stderr ---
+1. claude-sonnet-5/medium
+2. claude-haiku-4-5
+3. kimi-k3[1m]/max
+ccd pick: stdin is not a terminal; pick is interactive only — pass the mapping id directly instead

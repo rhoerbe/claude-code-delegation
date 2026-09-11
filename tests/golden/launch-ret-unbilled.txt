@@ -1,0 +1,5 @@
+argv: ccd ret 119-3-claude-sonnet-5-medium
+exit: 0
+--- stdout ---
+retired 119-3-claude-sonnet-5-medium
+--- stderr ---
