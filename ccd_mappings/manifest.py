@@ -4,10 +4,16 @@ The manifest is the one place a launch's facts are stated. `ccd` reads it and
 validates it here; the broker never sees any of this vocabulary and must not
 learn it (ADR-0004, ADR-0009).
 
-Two stored fields carry a launch — `launcher` and `model` — with `effort`
-stored only where it applies. The id and the label are *derived*, never
-stored: a hand-written name can contradict the fields beside it, which is the
-defect of issue #10 one level down.
+Two stored fields carry a launch — `launcher` and `model` — with `effort` and
+`billing` stored only where they apply. The id and the label are *derived*,
+never stored: a hand-written name can contradict the fields beside it, which
+is the defect of issue #10 one level down. `billing` is the deliberate
+exception to "derive, don't store": unlike a model slot, it names a fact
+about the *route* (a subscription seat vs. metered per-token access) that
+this repo cannot derive from the model at all — only the deployment layer
+that rendered the launcher knows it (ADR-0009's own reason the manifest is
+produced there). Storing a fact nobody here can compute is not the mistake
+storing a derivable one is.
 
 Shape and availability are checked at different moments on purpose. A manifest
 is well-formed or not on any machine, so `validate` runs at load; whether a
@@ -30,13 +36,24 @@ SCHEMA = 1
 # only for display, never for comparison.
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
+# How a launcher is paid for: a subscription seat, or metered per-token API
+# access. Lowercase, matching hosting's own ccd-launch.j2 (`billing="sub"` /
+# `billing="api"`, session labels like `119-3-sonnet-medium-api`) rather than
+# ADR-0002's prose casing (`Sub`/`API`) — session labels are lowercase
+# throughout, and this repo defers to the deployment layer's own literal
+# tokens rather than inventing a second spelling of the same two words.
+BILLING = ("sub", "api")
+
 # A derived id must come out as one shell-safe lowercase word: it becomes
 # `$CCD_MAPPING` in the launched session and is read back from rosters and
 # transcripts.
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 
 REQUIRED = ("launcher", "model")
-OPTIONAL = ("effort", "notes")
+# `billing` is stored, not derived, unlike everything else optional here —
+# see the validate() note below for why that is consistent rather than a
+# reintroduction of the retired `slot`.
+OPTIONAL = ("effort", "billing", "notes")
 
 # Fields that used to be stored and are now derived or gone. These are not
 # "unknown, possibly from a newer producer" — they are known-dead, and their
@@ -229,6 +246,24 @@ def validate(doc) -> list:
                 problems.append(
                     f"{label}: 'effort' is {effort!r}, must be one of "
                     f"{'/'.join(EFFORTS)}"
+                )
+
+        # Same null-means-absent, empty-string-refused precedent as effort
+        # above, for the same reason: `null` is how a transcript-shaped
+        # producer says "nothing was sent", so it reads the same as an
+        # omitted key, while an empty string is neither a value nor an
+        # honest absence.
+        billing = entry.get("billing")
+        if billing is not None:
+            if not isinstance(billing, str) or not billing.strip():
+                problems.append(
+                    f"{label}: 'billing' must be a non-empty string when "
+                    "present, or omitted entirely (null means omitted)"
+                )
+            elif billing not in BILLING:
+                problems.append(
+                    f"{label}: 'billing' is {billing!r}, must be one of "
+                    f"{'/'.join(BILLING)}"
                 )
 
         notes = entry.get("notes")
