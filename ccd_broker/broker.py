@@ -286,6 +286,18 @@ class Broker:
         first-class. A rule they cannot satisfy would make them second-class
         and is not evidence of anything — the absence of a pid says nothing
         about who is announcing.
+
+        **The residual hole is deliberate; do not "fix" it.** A pid-less
+        announcer can still take a handle held by a live pid-holding session
+        when the declared effort matches. Closing that would mean refusing an
+        announce for *lacking* a pid, which breaks the ordinary case of a human
+        repairing a handle by hand from a terminal, and breaks every
+        participant on a backend that has no `$CLAUDE_PID` to send. It is also
+        not a new hole: it is exactly what this check did before 1.4.0, and
+        ADR-0006 already puts forgery out of scope — an impostor announcing
+        identical metadata is indistinguishable from the real thing and always
+        will be. What 1.4.0 adds is a refusal where there IS evidence (two
+        different live processes); it does not promise one where there is none.
         """
         live_pid = live.get("pid")
 

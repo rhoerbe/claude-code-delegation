@@ -351,3 +351,22 @@ def test_a_one_sided_pid_falls_back_to_metadata(call, broker, live_pid,
     call(broker, "announce", handle="w-diff", effort="medium", **first)
     assert not call(broker, "announce", handle="w-diff", effort="high",
                     **second).get("ok")
+
+
+def test_a_pid_less_announcer_can_still_take_a_live_handle(call, broker, live_pid):
+    """The residual hole, asserted deliberately so it is not "fixed" by accident.
+
+    Closing it would mean refusing an announce for LACKING a pid, which breaks
+    a human repairing a handle by hand from a terminal and every participant on
+    a backend with no $CLAUDE_PID to send (ADR-0005). It is not new either —
+    this is exactly what the check did before 1.4.0, and ADR-0006 puts forgery
+    out of scope. 1.4.0 adds a refusal where there IS evidence of two live
+    processes; it does not promise one where there is none.
+
+    If this test starts failing, the question is whether the hole was closed on
+    purpose with a plan for shells and non-Claude-Code backends — not whether
+    to make it pass again.
+    """
+    call(broker, "announce", handle="w1", effort="medium", pid=str(live_pid))
+    r = call(broker, "announce", handle="w1", effort="medium")
+    assert r.get("ok"), repr(r)
