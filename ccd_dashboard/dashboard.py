@@ -1,7 +1,7 @@
 """The fleet dashboard: JSON model in, markdown out (ADR-0008).
 
 **Metadata is system-wide, content is scoped.** Every roster entry contributes
-its handle, model, effort, claim graph, working tree, status and cost to one
+its handle, slot, effort, claim graph, working tree, status and cost to one
 view. What a session is *doing* — a dispatcher's goal, a worker's last task —
 appears only for the single handle passed as `scope`, so no rendered artifact
 ever holds two clients' working material. That constraint lives in `build()`:
@@ -108,6 +108,14 @@ def build(roster: list, scope: Optional[str] = None, *,
         session = {
             "handle": handle,
             "role": _role(str(handle), roster),
+            # "slot" is the closed vocabulary (fable/opus/sonnet/haiku) —
+            # what this key used to call "model" before broker 1.3 stopped
+            # overloading that name (claude-code-delegation#13). "model" is
+            # now the *resolved* id the roster carries alongside it (e.g.
+            # claude-sonnet-5) — usually still empty today, since nothing
+            # upstream of the manifest/launcher work (#13 phase 2/4) can
+            # supply it yet.
+            "slot": entry.get("slot") or None,
             "model": entry.get("model") or None,
             "effort": entry.get("effort") or None,
             "owner": entry.get("owner") or None,
@@ -240,11 +248,11 @@ def render_markdown(model: dict, now: Optional[float] = None) -> str:
         lines.append("_(no handles announced)_")
         lines.append("")
     else:
-        lines.append("| handle | role | model/effort | owner | status "
+        lines.append("| handle | role | slot/effort | owner | status "
                      "| last activity | cost | tree |")
         lines.append("|---|---|---|---|---|---|---|---|")
         for session in sessions:
-            slot = "/".join(x for x in (session["model"], session["effort"]) if x)
+            slot = "/".join(x for x in (session["slot"], session["effort"]) if x)
             lines.append(
                 "| `{handle}` | {role} | {slot} | {owner} | {status} "
                 "| {ago} | {cost} | {tree} |".format(

@@ -123,11 +123,11 @@ def fleet(root: Path) -> list:
         assistant({"type": "text", "text": "ack"}, usage=_usage(7, 8)),
     ])
     return [
-        {"handle": "disp", "model": "opus", "effort": "high", "owner": None,
+        {"handle": "disp", "slot": "opus", "effort": "high", "owner": None,
          "cwd": DISP_CWD, "session": "s-disp"},
-        {"handle": "w1", "model": "sonnet", "effort": "medium", "owner": "disp",
+        {"handle": "w1", "slot": "sonnet", "effort": "medium", "owner": "disp",
          "cwd": W1_CWD, "session": "s-w1"},
-        {"handle": "w2", "model": "haiku", "effort": "low", "owner": "disp",
+        {"handle": "w2", "slot": "haiku", "effort": "low", "owner": "disp",
          "cwd": W2_CWD, "session": "s-w2"},
     ]
 
@@ -153,7 +153,7 @@ def run(tmp: Path) -> int:
 
     print("announce carries cwd and session (the only handle->transcript link):")
     b = Broker()
-    call(b, "announce", handle="w1", model="sonnet", effort="medium",
+    call(b, "announce", handle="w1", slot="sonnet", effort="medium",
          cwd="/work/beta", session="s-w1")
     entry = (call(b, "roster").get("workers") or [{}])[0]
     check("roster reports cwd", entry.get("cwd") == "/work/beta", repr(entry))
@@ -161,20 +161,20 @@ def run(tmp: Path) -> int:
     call(b, "claim", handle="w1", owner="disp")
     # A re-announce from a plain shell has no $CLAUDE_CODE_SESSION_ID and sends
     # an empty string; that must not blank what the session already reported.
-    call(b, "announce", handle="w1", model="sonnet", effort="medium",
+    call(b, "announce", handle="w1", slot="sonnet", effort="medium",
          cwd="", session="")
     entry = (call(b, "roster").get("workers") or [{}])[0]
     check("an empty re-announce preserves cwd/session",
           entry.get("cwd") == "/work/beta" and entry.get("session") == "s-w1",
           repr(entry))
     check("and still preserves the claim", entry.get("owner") == "disp")
-    call(b, "announce", handle="w1", model="sonnet", effort="medium",
+    call(b, "announce", handle="w1", slot="sonnet", effort="medium",
          cwd="/work/moved", session="s-new")
     entry = (call(b, "roster").get("workers") or [{}])[0]
     check("a re-announce that supplies them updates both",
           entry.get("cwd") == "/work/moved" and entry.get("session") == "s-new",
           repr(entry))
-    call(b, "announce", handle="w9", model="sonnet", effort="medium")
+    call(b, "announce", handle="w9", slot="sonnet", effort="medium")
     entry = next(e for e in call(b, "roster")["workers"] if e["handle"] == "w9")
     check("a participant that announces neither is simply unlocated",
           entry.get("cwd") is None and entry.get("session") is None, repr(entry))
@@ -241,8 +241,8 @@ def run(tmp: Path) -> int:
     check("the role comes off the claim graph, not a declaration",
           disp["role"] == "dispatcher" and w1["role"] == "worker")
     check("the owner is carried through", w1["owner"] == "disp")
-    check("model and effort are carried through",
-          (w1["model"], w1["effort"]) == ("sonnet", "medium"))
+    check("slot and effort are carried through",
+          (w1["slot"], w1["effort"]) == ("sonnet", "medium"))
     check("the working tree is reported", w1["tree"]["cwd"] == W1_CWD)
     check("status is reported for every entry",
           [s["status"] for s in model["sessions"]] == ["idle", "parked", "idle"],
@@ -265,7 +265,7 @@ def run(tmp: Path) -> int:
 
     print("\na handle with no transcript still appears:")
     model = dashboard.build(
-        [{"handle": "opaque", "model": "local", "effort": "-", "owner": None}],
+        [{"handle": "opaque", "slot": "local", "effort": "-", "owner": None}],
         None, root=root)
     only = model["sessions"][0]
     check("status is unknown rather than invented", only["status"] == "unknown")

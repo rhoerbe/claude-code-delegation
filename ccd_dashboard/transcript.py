@@ -140,6 +140,15 @@ class Facts:
     last_activity: Optional[str] = None
     branch: Optional[str] = None
     models: list = field(default_factory=list)
+    #: The most recently reported model/effort (claude-code-delegation#13) —
+    #: `model` from the latest assistant record's own `message.model`, same
+    #: source as `models` but just the current one; `effort` from that
+    #: record's top-level `effort` field, Claude Code's post-downgrade
+    #: report of what actually served the turn. Both are the "observed"
+    #: half of drift detection (`ccd ls`): compared against a handle's
+    #: *declared* slot/effort/model, never written back anywhere.
+    model: Optional[str] = None
+    effort: Optional[str] = None
     turns: int = 0
     tokens: dict = field(default_factory=dict)
     #: The same tokens split per model, so a price table can be applied to a
@@ -233,6 +242,15 @@ def parse(path: Path) -> Facts:
 
             if rtype == "assistant":
                 model = message.get("model")
+                if model:
+                    facts.model = str(model)
+                # Claude Code's own post-downgrade report of what effort
+                # actually served this turn (hosting#131's verification: a
+                # real transcript records it top-level, alongside
+                # `message`/`timestamp`/`gitBranch` — not nested inside
+                # `message` the way `model` is).
+                if rec.get("effort"):
+                    facts.effort = str(rec["effort"])
                 usage = message.get("usage")
                 if isinstance(usage, dict):
                     facts.turns += 1
