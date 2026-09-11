@@ -14,7 +14,7 @@ Stating slot and effort separately at the prompt was the obvious alternative and
 
 A **model slot** is exactly one of `fable`, `opus`, `sonnet`, `haiku` — the four names Claude Code's `--model` accepts — and it carries no effort. Effort is its own field with exactly one value per entry. Writing a slot as `opus/high` was considered and rejected outright: it puts an effort inside a name, so the name and the `effort` field can then contradict each other. That is issue #10's defect one level up, and moving it from the environment into a config file would make it permanent rather than fixing it.
 
-This is a vocabulary decision as much as a schema one. "Tier" previously meant the slot, the effort, and the pair of them depending on the sentence, which is why it no longer appears anywhere in this repo.
+This is a vocabulary decision as much as a schema one. "Model slot" replaces an older term that meant the slot, the effort, or the pair of them depending on the sentence — which is why that term was retired from this repo rather than redefined (issue #10).
 
 ## Effort is requested, never guaranteed
 
