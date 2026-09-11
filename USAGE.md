@@ -87,13 +87,18 @@ since it is easy to set only the `CCD_*` env vars and assume they do this too:
 
 - `--model`/`--effort` pick what actually runs this session. `CCD_MODEL`/
   `CCD_EFFORT` are a separate convention that `ccd` itself never reads (see
-  README's environment-variable table) — the worker skill echoes them onto the
-  roster via `ccd announce` so other participants can see the model slot. Both
-  pairs describe one decision, so derive them from one input rather than
-  typing each of the four by hand: that is [what a launch wrapper should do for
-  you](#what-a-launch-wrapper-should-do-for-you). The skill checks the pair it
-  announced against what is actually running and warns in its own terminal if
-  they disagree ([skills/ccd-worker.md](skills/ccd-worker.md) §1).
+  README's environment-variable table) — the worker skill echoes `CCD_EFFORT`
+  onto the roster via `ccd announce` so other participants can see it.
+  `CCD_MODEL` stays local: the roster carries no model-slot field (broker
+  1.3, claude-code-delegation#13 — a live probe found naming a model directly
+  reaches it exactly as well as routing through a slot), so `CCD_MODEL` is
+  only ever compared against what is actually running, in the skill's own
+  self-check below. Both pairs still describe one decision, so derive them
+  from one input rather than typing each of the four by hand: that is [what a
+  launch wrapper should do for you](#what-a-launch-wrapper-should-do-for-you).
+  The skill checks the pair it declared against what is actually running and
+  warns in its own terminal if they disagree
+  ([skills/ccd-worker.md](skills/ccd-worker.md) §1).
 - `--name` sets Claude Code's own display name — shown in the prompt box, the
   `/resume` picker, and the terminal title. Without it a session has no
   default name, which gets confusing fast once more than one window is open.
@@ -111,17 +116,20 @@ the workers it farms tasks out to, but nothing enforces that.
 
 ### What a launch wrapper should do for you
 
-Four values that must agree, retyped into every window, is how a roster ends up
-advertising a model slot the session is not running at. Nothing in this repo
-ships a wrapper — deployment is deliberately out of scope (see README's *What
-this repo is not*) — but whatever you write locally should do three things:
+Four values that must agree, retyped into every window, is how a session ends
+up running an effort it never declared, or a launch failing in the backend's
+own words instead of ccd's. Nothing in this repo ships a wrapper — deployment
+is deliberately out of scope (see README's *What this repo is not*) — but
+whatever you write locally should do three things:
 
 1. **Derive the handle once.** One input (`w1`, `disp`) becomes `CCD_HANDLE`
    and `--name`, so the roster entry and the window title cannot drift apart.
-2. **Apply the model-slot mapping.** One slot name becomes both the
+2. **Apply the model-slot mapping.** One slot name becomes the
    `--model`/`--effort` flags that select what runs and the `CCD_MODEL`/
-   `CCD_EFFORT` values that go on the roster. One input, one mapping, no pair
-   to keep in sync by hand.
+   `CCD_EFFORT` values a worker exports — but only `CCD_EFFORT` goes on the
+   roster (the roster carries no model-slot field; `CCD_MODEL` stays local to
+   the skill's self-check — see above). One input, one mapping, no pair to
+   keep in sync by hand.
 3. **Reserve the name before exec.** `ccd announce --exclusive` takes the
    handle while the wrapper still owns the decision, so two windows started
    from the same slot cannot end up racing for one queue.
@@ -256,8 +264,8 @@ The broker holds no content and forgets a message the moment it is delivered
 content are read from each participant's **own Claude Code transcript**. The
 only thing linking a handle to its transcript is what the session reported when
 it announced: `ccd announce` sends its working directory and
-`$CLAUDE_CODE_SESSION_ID` along with the model slot, and the transcript is then
-named deterministically under `~/.claude/projects/`. Nothing about this is
+`$CLAUDE_CODE_SESSION_ID`, and the transcript is then named deterministically
+under `~/.claude/projects/`. Nothing about this is
 verified — like `-f` on a send, it is self-asserted
 ([ADR-0006](docs/adr/0006-one-boundary-uid-authenticates-claims-authorize.md)).
 
@@ -363,7 +371,7 @@ message simply queues for a session that will never collect it.
 | `ccd ls` is empty but workers are running | The broker restarted. Queues and the roster are in-memory only, and neither side is told. Every participant must re-announce. |
 | `'w1' is claimed by 'disp'` on send | Another dispatcher holds that worker. `ccd release w1`, or `ccd claim w1 <you> --force`. |
 | A worker is stuck claimed by a dispatcher that no longer exists | Expected — claims have no liveness. Force the claim over. |
-| `handle 'w1' is already announced as …` | A live handle, different model slot. Retire it, or pass a different handle. Re-announcing the *same* slot is allowed, so Esc-interrupt recovery still works. |
+| `handle 'w1' is already announced at effort …` | A live handle, different effort. Retire it, or pass a different handle. Re-announcing the *same* effort is allowed, so Esc-interrupt recovery still works. |
 | A task arrives twice | Known, unexplained — see issue #3. Every re-queue is logged to the broker's stderr with its reason; the log sits next to the pidfile. |
 | `ccd dashboard` shows `unknown` status and no cost for a handle | That session announced no working directory or session id — announced by hand from a shell, or running on a backend that keeps no Claude Code transcript. Nothing is broken; there is simply nothing to read. |
 | `ccd dashboard --write` refuses the path | It is inside a git working tree, deliberately and without an override. Write it to a state directory instead. |

@@ -45,9 +45,16 @@ sketch if you are building your own, since nothing here depends on it:
   `--model`/`--effort` it passes through, reserves the handle with `ccd
   announce --exclusive`, and then execs whichever backend launcher was named,
   so backends stay orthogonal to ccd. Deriving both pairs from one input is
-  the point: hand-matching them is how a roster ends up advertising a slot the
-  session is not running at (issue #10). See [`USAGE.md`](USAGE.md), *What a
-  launch wrapper should do for you*.
+  the point: hand-matching them is how a session ends up running an effort it
+  never declared, or a launch failing in the backend's own words instead of
+  ccd's (issue #10). `CCD_MODEL` (the model-slot name) stays a real
+  environment variable this wrapper exports and the worker skill's own
+  self-check compares against, but it does not reach the roster —
+  `announce`/`ccd ls` carry `effort` (and, once a manifest exists, a resolved
+  `model` and a `mapping` id) rather than a slot name, since a live probe
+  found the slot itself added nothing a resolved model doesn't already say
+  (claude-code-delegation#13). See [`USAGE.md`](USAGE.md), *What a launch
+  wrapper should do for you*.
 
 Two deployment findings worth carrying over wherever you wire this up: a
 handle must be unique among *live* sessions, since two sessions sharing one
@@ -96,7 +103,8 @@ ccd broker stop
 | `CCD_HANDLE` | `ccd recv`/`announce`/`ret` | *(none — required if `<handle>` isn't passed positionally)* | Default handle for `recv`/`announce`/`ret` so a worker's skill/script doesn't have to hardcode it. |
 | `CCD_TRANSCRIPT_ROOT` | `ccd dashboard` | `${CLAUDE_CONFIG_DIR:-~/.claude}/projects` | Where Claude Code keeps per-project transcript directories. The dashboard is the one component that reads them (ADR-0008) — the broker and the rest of the CLI stay backend-agnostic and read no Claude-internal state at all. |
 | `CLAUDE_CODE_SESSION_ID` | `ccd announce` | *(set by Claude Code inside a session; empty elsewhere)* | Passed through to the broker so the dashboard can find that session's transcript. Announcing from a plain shell sends nothing and leaves whatever the session already reported. |
-| `CCD_MODEL`, `CCD_EFFORT` | worker skill (`skills/ccd-worker.md`) convention, not read by `ccd` itself | — | Passed as the `model`/`effort` args to `ccd announce`, so the roster (`ccd ls`) shows other participants which model slot each handle carries. Nothing reads them back off the running session, so the `ccd-worker` skill compares them with what is actually running and warns on a mismatch. Set by whatever launches the session. |
+| `CCD_EFFORT` | worker skill (`skills/ccd-worker.md`) convention, not read by `ccd` itself | — | Passed as the `effort` arg to `ccd announce`, so the roster (`ccd ls`) shows other participants which effort each handle carries. Nothing reads it back off the running session, so the `ccd-worker` skill compares it against `$CLAUDE_EFFORT` and warns on a mismatch. Set by whatever launches the session. |
+| `CCD_MODEL` | worker skill (`skills/ccd-worker.md`) convention, not read by `ccd` itself | — | The launcher's model-slot name (e.g. `sonnet`). Local only: it does **not** reach `ccd announce` (broker 1.3 dropped the roster's slot field, claude-code-delegation#13 — a resolved model id and a manifest `mapping` id are its replacements, once phase 2/4's manifest and launcher work exist). Still exported for the `ccd-worker` skill's own self-check, which compares it against the model the session believes itself to be. Set by whatever launches the session. |
 
 The broker itself takes no flags or config file — `$CCD_SOCKET` is its only
 configuration surface (`ccd-broker -h` / `python3 -m ccd_broker -h` for the
@@ -141,12 +149,17 @@ Announce a handle onto the roster, list it, retire it:
 $ ccd announce w1 sonnet medium
 announced w1 (sonnet/medium)
 $ ccd ls
-w1      sonnet  medium
+w1      medium  -       -       -       -
 $ ccd ret w1
 retired w1
 $ ccd ls
 (no workers announced)
 ```
+
+`ccd ls`'s columns are handle/effort/owner/model/pid/status, then a trailing
+drift marker (empty here — nothing to compare against without a transcript).
+The `sonnet` in `announce`'s own confirmation line is cosmetic only: that
+positional does not reach the roster (see the `CCD_MODEL` row above).
 
 Stop the broker when done:
 
@@ -207,8 +220,8 @@ dishonest one: see
 [ADR-0007](docs/adr/0007-affiliation-is-claimed-not-declared.md) and
 [ADR-0006](docs/adr/0006-one-boundary-uid-authenticates-claims-authorize.md).
 
-`ccd dashboard` is the read-only fleet view: metadata (handle, role, model
-slot, claim graph, working tree, status, cost) for **every** announced handle,
+`ccd dashboard` is the read-only fleet view: metadata (handle, role, model,
+effort, claim graph, working tree, status, cost) for **every** announced handle,
 and one bounded content line — a dispatcher's goal, a worker's last task — for
 the **one** handle named by `--scope`, so no rendered view ever holds two clients'
 working material. Content and cost come from each session's own transcript,
@@ -225,9 +238,9 @@ Full protocol semantics (wire format, blocking/dequeue-on-ack, the
 
 - [`skills/ccd-worker.md`](skills/ccd-worker.md) — the Claude Code skill a
   worker (or a dispatcher, same shape) loads: announce on start, check the
-  announced slot against what is actually running, `ccd recv` as the last tool
-  call every turn, reply-then-recv-again, retire on exit, and the
-  Esc-interrupt note above.
+  declared effort (and, on a bare launch, the model) against what is
+  actually running, `ccd recv` as the last tool call every turn,
+  reply-then-recv-again, retire on exit, and the Esc-interrupt note above.
 - [`tests/ccd_smoke.sh`](tests/ccd_smoke.sh) — an end-to-end smoke test
   against a private, throwaway broker instance. Run it with
   `tests/ccd_smoke.sh`.

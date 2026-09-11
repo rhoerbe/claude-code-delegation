@@ -25,17 +25,29 @@ roster (`ccd ls`):
 ccd announce "$CCD_HANDLE" "$CCD_MODEL" "$CCD_EFFORT"
 ```
 
-This tells anyone dispatching work which handle maps to which model slot. A
-dispatcher does this too — its own handle is just as much a roster entry as
-any worker's, so other participants can route tasks or results back to it.
+This declares your effort on the roster (`ccd ls`), so anyone dispatching
+work can see it. A dispatcher does this too — its own handle is just as much
+a roster entry as any worker's, so other participants can route tasks or
+results back to it.
+
+The middle positional (your launcher's model-slot name) does not reach the
+roster at all — broker 1.3 dropped that field (claude-code-delegation#13: a
+live probe showed naming a model directly reaches it exactly as well as
+routing through a slot, so the roster carries `effort` and, once phase 2/4's
+manifest and launcher work exist, a resolved `model` and a `mapping` id
+instead). Passing `$CCD_MODEL` here still matters, though: it is still what
+the self-check right below compares against — that check is local to this
+terminal and never touches the roster.
 
 ### Then check the announcement against what is actually running
 
 `$CCD_MODEL`/`$CCD_EFFORT` are what your launcher *declared*. Nothing reads
 them back off the running session, so they can drift from what is actually
-serving this turn — a wrong slot on the roster makes every dispatcher route
-by it wrongly. Immediately after announcing, check for drift and report it in
-your own terminal.
+serving this turn — a wrong effort on the roster makes every dispatcher
+route by it wrongly (the roster does not carry a model at all yet, so a
+model drift has no roster consequence — see above — but is still worth
+catching for the human at your TUI). Immediately after announcing, check for
+drift and report it in your own terminal.
 
 One tool call gives you both halves of the answer:
 
@@ -68,9 +80,9 @@ so the human at your TUI can fix the launch.
 
 **Never re-announce a corrected pair.** The warning is for the human; it does
 not mutate the roster. The broker rejects a re-announce of a live handle at a
-different model slot, and getting it through needs `force` — the same flag
-that lets an impostor seize a live handle, far too blunt for routine drift.
-Leave the roster showing what was declared and let the human relaunch.
+different effort, and getting it through needs `force` — the same flag that
+lets an impostor seize a live handle, far too blunt for routine drift. Leave
+the roster showing what was declared and let the human relaunch.
 
 ## 2. End every turn parked in `recv`
 
