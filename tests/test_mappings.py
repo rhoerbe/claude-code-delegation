@@ -131,7 +131,7 @@ def run(tmp: Path) -> int:
     if listing:
         shown = [line.split(". ", 1)[1]
                  for line in listing.group(1).strip().splitlines()]
-        derived = [m.display(e) for e in EXAMPLE["mappings"]]
+        derived = m.labels(EXAMPLE)
         check("the example renders as the listing README publishes",
               shown == derived, f"README {shown!r} != derived {derived!r}")
     for ident in m.ids(EXAMPLE):
@@ -248,6 +248,40 @@ def run(tmp: Path) -> int:
         == mid.rsplit("/", 1)[-1]
         for mid in ("moonshotai/kimi-k3", "z-ai/glm-5.3-flash", "GLM-4.6",
                     "deepseek/DeepSeek-V4", "mistral-large-2512")))
+
+    print("\ncolliding labels take the launcher, exactly as ids do:")
+    # A label exists so a human can choose from it; two identical rows mean the
+    # choice cannot be made from the label at all.
+    alone = doc(entry(launcher="claude-openrouter", model="moonshotai/kimi-k3",
+                      effort="max"),
+                entry())
+    check("outside a collision the label stays short",
+          m.labels(alone) == ["kimi-k3/max", "claude-sonnet-5/medium"],
+          repr(m.labels(alone)))
+    both = doc(entry(launcher="claude-openrouter", model="moonshotai/kimi-k3",
+                     effort="max"),
+               entry(launcher="claude-alt", model="moonshotai/kimi-k3",
+                     effort="max"),
+               entry())
+    check("in a collision every member carries its launcher",
+          m.labels(both) == ["kimi-k3/max (claude-openrouter)",
+                             "kimi-k3/max (claude-alt)",
+                             "claude-sonnet-5/medium"], repr(m.labels(both)))
+    check("the uninvolved entry is untouched",
+          m.labels(both)[2] == "claude-sonnet-5/medium")
+    check("no two labels in a file are equal",
+          len(set(m.labels(both))) == len(m.labels(both)))
+    # Same property the ids have, and for the same reason: anything that
+    # quoted a label must not be invalidated by a later reordering.
+    flipped = {"schema": 1, "mappings": list(reversed(both["mappings"]))}
+    check("reordering the file does not relabel anything",
+          sorted(m.labels(both)) == sorted(m.labels(flipped)),
+          repr(m.labels(flipped)))
+    check("labels and ids collide on the same entries, so they stay in lockstep",
+          [l.endswith(")") for l in m.labels(both)]
+          == [i.endswith(("-claude-openrouter", "-claude-alt"))
+              for i in m.ids(both)],
+          f"{m.labels(both)!r} vs {m.ids(both)!r}")
 
     print("\nlauncher is a bare name, resolved on $PATH at launch:")
     check("a path is refused",

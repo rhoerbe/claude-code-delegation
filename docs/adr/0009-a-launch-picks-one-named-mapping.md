@@ -64,6 +64,8 @@ The label is the model plus the effort when there is one — `kimi-k3/max`, `cla
 
 Model ids are rendered **as their provider writes them**, shortened to the last path segment and otherwise untouched. Title-casing them was considered and rejected: it needs no table, but it invents a name — `glm-5.3-flash` is not `Glm-5.3-Flash` to anyone — and it breaks the property that matters more, which is that the label matches the string the same reader meets in the manifest's `model` field, in `ccd ls`, and in the transcript. A label nobody can grep for is a small recurring cost paid for a cosmetic gain. Dropping the provider prefix is shortening rather than renaming, and the full id sits one column away.
 
+Labels disambiguate exactly as ids do, and are derived over the whole file for the same reason one entry cannot see a collision. A label exists so a human can choose from it, so two identical rows in a picker mean the choice cannot be made from the label at all — a display that fails to identify the thing is this record's own defect wearing different clothes. Where entries share a label, every member of that group carries its launcher, which also keeps label and id in lockstep so anything quoting one can be matched to the other. Appending the launcher unconditionally was rejected: it makes every label noisier to fix a case that usually does not arise.
+
 An entry that genuinely needs a human aside carries `notes`. The difference that matters is that `notes` is visibly not the label, so nobody reads it as authoritative.
 
 ## Why the deployment layer produces the file
@@ -79,6 +81,8 @@ The file being machine-rendered rather than hand-edited is also why it is JSON. 
 In the **reader**, never in the broker. `ccd` validates the closed effort set, a bare-name launcher, retired keys and id collisions when it loads the manifest. The broker learns none of this vocabulary: it treats roster text as opaque, which is what lets it stay agnostic about backends that do not exist yet, and ADR-0004's line about keeping configuration out of the broker applies unchanged.
 
 Shape and availability are validated at different moments. A manifest is well-formed or not on any machine, so shape is checked at load; whether a named launcher exists on `$PATH` depends on the host, so it is resolved at launch. A controller that renders a manifest for a host it is not itself can therefore still validate what it produced.
+
+Unknown keys are ignored and retired keys are refused, which are two halves of one rule rather than a contradiction. Ignoring an unknown key buys **forward** compatibility: an older reader survives a newer producer that has learned a field. `slot`, `id` and `display` are the **backward** case — known-dead keys from an older producer — and there silence is the expensive answer, because a stale manifest would validate clean while the intent encoded in it is dropped on the floor. Refusing names the key and asks for the file to be regenerated, which is the only action that actually fixes it.
 
 ## Consequences
 

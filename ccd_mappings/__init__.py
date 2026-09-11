@@ -10,11 +10,11 @@ learn no Claude Code vocabulary (ADR-0004).
 
 Public surface:
 
-    from ccd_mappings import display, entries, ids, load
+    from ccd_mappings import entries, ids, labels, load
 
     doc = load()                          # raises ManifestError, listing every problem
-    for ident, entry in zip(ids(doc), entries(doc)):   # file order is picker order
-        print(ident, display(entry))      # both derived, never stored
+    for ident, label in zip(ids(doc), labels(doc)):    # file order is picker order
+        print(ident, label)               # both derived, never stored
 """
 
 from .manifest import (  # noqa: F401
@@ -27,6 +27,7 @@ from .manifest import (  # noqa: F401
     entry_id,
     find,
     ids,
+    labels,
     load,
     manifest_path,
     resolve_launcher,
@@ -43,6 +44,7 @@ __all__ = [
     "entry_id",
     "find",
     "ids",
+    "labels",
     "load",
     "manifest_path",
     "resolve_launcher",

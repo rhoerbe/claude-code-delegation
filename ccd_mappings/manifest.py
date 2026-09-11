@@ -126,8 +126,8 @@ def ids(doc: dict) -> list:
             for e, b in zip(items, base)]
 
 
-def display(entry: dict) -> str:
-    """The label for an entry, derived rather than stored.
+def display(entry: dict, *, with_launcher: bool = False) -> str:
+    """The label for one entry, derived rather than stored.
 
     The model as its provider writes it, plus the effort when there is one:
 
@@ -138,10 +138,38 @@ def display(entry: dict) -> str:
     A stored label can contradict the fields it describes, so there is no
     `display` key and no override (ADR-0009). An entry needing a human aside
     carries `notes`, which is visibly not authoritative.
+
+    Prefer `labels(doc)`: a label has to identify an entry among the others,
+    which this function alone cannot see. `with_launcher` is what `labels()`
+    applies to a colliding group.
     """
     model = _short_model((entry.get("model") or "").strip())
     effort = (entry.get("effort") or "").strip()
-    return f"{model}/{effort}" if model and effort else model or effort
+    label = f"{model}/{effort}" if model and effort else model or effort
+    launcher = (entry.get("launcher") or "").strip()
+    if with_launcher and launcher:
+        return f"{label} ({launcher})" if label else f"({launcher})"
+    return label
+
+
+def labels(doc: dict) -> list:
+    """Derived labels, positionally aligned with `entries(doc)`.
+
+    Mirrors `ids()`, and for the same reason. A label exists so a human can
+    choose from it, so two identical rows in a picker mean the choice cannot
+    be made from the label at all. Where entries share one, every member of
+    that group carries its launcher — all of them, so file order cannot change
+    what an entry is called.
+
+    Always appending the launcher was rejected: it makes every label noisier,
+    `claude-sonnet-5/medium (claude)`, to fix a case that usually does not
+    arise.
+    """
+    items = [e if isinstance(e, dict) else {} for e in entries(doc)]
+    base = [display(e) for e in items]
+    clashing = {label for label in base if base.count(label) > 1}
+    return [display(e, with_launcher=True) if b in clashing else b
+            for e, b in zip(items, base)]
 
 
 def validate(doc) -> list:

@@ -190,12 +190,14 @@ where it applies, and the fourth is for the human.
 above, so neither can contradict them — see [The id is derived](#the-id-is-derived)
 and [The label is derived](#the-label-is-derived).
 
-Unknown keys, at either level, are ignored rather than refused: the file is
-machine-rendered, and a producing layer that learns a new field should not
-break every older reader. **Retired keys are refused**, though — an entry
-carrying `slot`, `id` or `display` is a file that predates this contract and
-was not regenerated, which is worth saying out loud rather than silently
-reinterpreting.
+Unknown keys, at either level, are ignored; **retired keys are refused**.
+Those are two halves of one rule, not an exception to it. Ignoring an unknown
+key buys *forward* compatibility — an older reader survives a newer producer
+that has learned a field. `slot`, `id` and `display` are the backward case:
+known-dead keys from an *older* producer, where silence would let a stale
+manifest validate clean while the intent written into it is dropped on the
+floor. So an entry carrying one is refused, naming the key and saying to
+regenerate the file.
 
 ### The `[1m]` context suffix
 
@@ -233,7 +235,7 @@ that is a validation error.
 ### The label is derived
 
 A picker shows each entry as a label, computed from `model` and `effort` by
-`ccd_mappings.display()` — there is no stored field for it and no override. A
+`ccd_mappings.labels()` — there is no stored field for it and no override. A
 stored label is free text that can disagree with the fields beside it, which is
 issue #10's defect one level down; deriving it makes that disagreement
 unrepresentable rather than merely discouraged. One function means the picker
@@ -254,6 +256,23 @@ the label greppable and needs no knowledge of model families.
 
 An entry with no effort shows the model alone, which is the honest rendering:
 there is no value to display because none is sent.
+
+**Labels disambiguate exactly as ids do.** A label exists so a human can choose
+from it, so two identical rows in a picker mean the choice cannot be made from
+the label at all. Where entries share a label, each member of that group
+carries its launcher — all of them, so file order cannot change what an entry
+is called, and the label stays in lockstep with the id:
+
+```
+kimi-k3/max                            kimi-k3-max                      (alone)
+kimi-k3/max (claude-openrouter)        kimi-k3-max-claude-openrouter    (colliding)
+kimi-k3/max (claude-alt)               kimi-k3-max-claude-alt           (colliding)
+```
+
+Appending the launcher *always* was rejected: it would make every label
+noisier — `claude-sonnet-5/medium (claude)` — to fix a case that usually does
+not arise. That is why the label is derived over the whole file rather than
+from one entry; the id already needs the file for the same reason.
 
 If an entry needs a human aside, that is what `notes` is for — and `notes` is
 visibly not the label, which is the difference that matters.
