@@ -1,0 +1,6 @@
+argv: ccd send a b --wat
+exit: 2
+--- stdout ---
+
+--- stderr ---
+ccd send: unknown argument: --wat

@@ -1,0 +1,6 @@
+argv: ccd recv a b
+exit: 2
+--- stdout ---
+
+--- stderr ---
+ccd recv: unexpected argument: b

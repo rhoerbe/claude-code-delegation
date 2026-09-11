@@ -1,0 +1,5 @@
+argv: ccd ret nobody
+exit: 0
+--- stdout ---
+retired nobody
+--- stderr ---

@@ -1,0 +1,5 @@
+argv: ccd broker start
+exit: 0
+--- stdout ---
+ccd broker: started (pid <PID>, socket <TMP>/ccd.sock)
+--- stderr ---

@@ -1,0 +1,6 @@
+argv: ccd claim
+exit: 2
+--- stdout ---
+
+--- stderr ---
+usage: ccd claim <worker> [<dispatcher>] [--force]  ($CCD_HANDLE is the default dispatcher)

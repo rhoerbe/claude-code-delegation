@@ -1,0 +1,6 @@
+argv: ccd announce a-model low
+exit: 2
+--- stdout ---
+
+--- stderr ---
+ccd announce: no handle given and $CCD_HANDLE not set

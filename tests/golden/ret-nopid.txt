@@ -1,0 +1,5 @@
+argv: ccd ret w-nopid
+exit: 0
+--- stdout ---
+retired w-nopid
+--- stderr ---

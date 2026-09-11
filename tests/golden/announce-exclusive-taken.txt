@@ -1,0 +1,6 @@
+argv: ccd announce w1 a-model low --exclusive
+exit: 1
+--- stdout ---
+
+--- stderr ---
+error: handle 'w1' is already announced (effort low)

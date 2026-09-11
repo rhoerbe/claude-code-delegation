@@ -1,0 +1,20 @@
+argv: ccd frobnicate
+exit: 2
+--- stdout ---
+
+--- stderr ---
+ccd: unknown subcommand: frobnicate
+usage: ccd <subcommand> [args]
+
+  ccd send <to> <msg> [-f from]
+  ccd recv [<handle>] [-t timeout]      ($CCD_HANDLE is the default handle)
+  ccd announce [<handle>] <model> <effort> [--exclusive]
+  ccd ret [<handle>]
+  ccd claim <worker> [<dispatcher>] [--force]
+  ccd release <worker> [--force]
+  ccd ls
+  ccd dashboard [--scope <handle>] [--json] [--write <path>] [--rates <file>]
+  ccd ping
+  ccd broker start|stop|status
+
+env: CCD_SOCKET, CCD_HANDLE, CCD_PIDFILE

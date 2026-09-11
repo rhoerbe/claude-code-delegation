@@ -1,0 +1,5 @@
+argv: ccd send w1 hello -f disp
+exit: 0
+--- stdout ---
+sent (id=m1)
+--- stderr ---

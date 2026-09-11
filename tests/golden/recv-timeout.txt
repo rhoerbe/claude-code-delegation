@@ -1,0 +1,6 @@
+argv: ccd recv w1 -t 1
+exit: 1
+--- stdout ---
+
+--- stderr ---
+ccd recv: timeout

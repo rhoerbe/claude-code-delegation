@@ -1,0 +1,89 @@
+argv: ccd dashboard --json
+exit: 0
+--- stdout ---
+{
+  "schema": "ccd.dashboard/1",
+  "generated_at": "<TS>",
+  "scope": null,
+  "sessions": [
+    {
+      "handle": "disp",
+      "role": "worker",
+      "model": null,
+      "effort": "high",
+      "owner": null,
+      "tree": {
+        "cwd": "<REPO>",
+        "repo": "<REPO>",
+        "branch": null
+      },
+      "transcript": {
+        "session": null,
+        "path": null,
+        "resolved_by": null
+      },
+      "status": "unknown",
+      "last_activity": null,
+      "cost": {
+        "turns": 0,
+        "tokens": {},
+        "by_model": {},
+        "usd": null
+      },
+      "content": null
+    },
+    {
+      "handle": "w-nopid",
+      "role": "worker",
+      "model": null,
+      "effort": "low",
+      "owner": null,
+      "tree": {
+        "cwd": "<REPO>",
+        "repo": "<REPO>",
+        "branch": null
+      },
+      "transcript": {
+        "session": null,
+        "path": null,
+        "resolved_by": null
+      },
+      "status": "unknown",
+      "last_activity": null,
+      "cost": {
+        "turns": 0,
+        "tokens": {},
+        "by_model": {},
+        "usd": null
+      },
+      "content": null
+    },
+    {
+      "handle": "w1",
+      "role": "worker",
+      "model": null,
+      "effort": "low",
+      "owner": null,
+      "tree": {
+        "cwd": "<REPO>",
+        "repo": "<REPO>",
+        "branch": null
+      },
+      "transcript": {
+        "session": null,
+        "path": null,
+        "resolved_by": null
+      },
+      "status": "unknown",
+      "last_activity": null,
+      "cost": {
+        "turns": 0,
+        "tokens": {},
+        "by_model": {},
+        "usd": null
+      },
+      "content": null
+    }
+  ]
+}
+--- stderr ---

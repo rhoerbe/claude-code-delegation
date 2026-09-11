@@ -1,0 +1,6 @@
+argv: ccd dashboard --write <REPO>/fleet.json
+exit: 1
+--- stdout ---
+
+--- stderr ---
+ccd dashboard: refusing to write inside the git working tree at <REPO>: the dashboard aggregates several sessions' material and must not be committable into one of their repositories (ADR-0008). Choose a path outside any repository — /tmp or a state directory.

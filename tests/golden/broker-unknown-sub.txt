@@ -1,0 +1,6 @@
+argv: ccd broker wat
+exit: 2
+--- stdout ---
+
+--- stderr ---
+usage: ccd broker start|stop|status

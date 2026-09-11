@@ -1,0 +1,6 @@
+argv: ccd recv -x
+exit: 2
+--- stdout ---
+
+--- stderr ---
+ccd recv: unknown argument: -x

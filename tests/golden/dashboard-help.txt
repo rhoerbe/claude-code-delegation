@@ -1,0 +1,5 @@
+argv: ccd dashboard --help
+exit: 0
+--- stdout ---
+usage: ccd dashboard [--scope <handle>] [--json] [--write <path>] [--rates <file>]
+--- stderr ---

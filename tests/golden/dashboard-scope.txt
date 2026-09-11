@@ -1,0 +1,15 @@
+argv: ccd dashboard --scope w1
+exit: 0
+--- stdout ---
+# ccd fleet — 3 sessions (<TS>)
+
+| handle | role | model/effort | owner | status | last activity | cost | tree |
+|---|---|---|---|---|---|---|---|
+| `disp` | worker | high | — | unknown | — | — | ccd-py-cli |
+| `w-nopid` | worker | low | — | unknown | — | — | ccd-py-cli |
+| `w1` | worker | low | — | unknown | — | — | ccd-py-cli |
+
+## Scope: `w1` (worker)
+
+_No content in this session's transcript (never announced a cwd, no transcript, or nothing said yet)._
+--- stderr ---
