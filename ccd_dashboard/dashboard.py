@@ -66,7 +66,7 @@ def _usd(by_model: dict, rates: Optional[dict]) -> Optional[float]:
     """Price a session's tokens, or None when we cannot price it honestly.
 
     Rates are USD per million tokens, per model, supplied by the caller — this
-    repo ships none, because pricing is vendor- and deployment-specific and a
+    repo ships none, because pricing is provider- and deployment-specific and a
     stale table baked in here would be worse than an empty cost column. One
     unpriced model makes the whole figure None rather than an undercount.
     """
@@ -244,13 +244,13 @@ def render_markdown(model: dict, now: Optional[float] = None) -> str:
                      "| last activity | cost | tree |")
         lines.append("|---|---|---|---|---|---|---|---|")
         for session in sessions:
-            tier = "/".join(x for x in (session["model"], session["effort"]) if x)
+            slot = "/".join(x for x in (session["model"], session["effort"]) if x)
             lines.append(
-                "| `{handle}` | {role} | {tier} | {owner} | {status} "
+                "| `{handle}` | {role} | {slot} | {owner} | {status} "
                 "| {ago} | {cost} | {tree} |".format(
                     handle=session["handle"],
                     role=session["role"],
-                    tier=tier or "—",
+                    slot=slot or "—",
                     owner=f"`{session['owner']}`" if session["owner"] else "—",
                     status=session["status"],
                     ago=_ago(session["last_activity"], now),

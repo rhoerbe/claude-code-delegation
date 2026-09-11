@@ -225,10 +225,10 @@ class Broker:
         # `exclusive` is for a caller that KNOWS it is starting a new session
         # — a launcher reserving a name before exec. For it, an identical
         # model/effort is not the idempotent re-announce below but a genuine
-        # collision: two workers of the same tier on the same issue and phase
-        # is precisely the case the launcher's ordinal suffix exists for, and
-        # the broker cannot tell the two apart on its own (there is no session
-        # identity). Announcing without it stays idempotent, so an
+        # collision: two workers of the same model slot on the same issue and
+        # phase is precisely the case the launcher's ordinal suffix exists for,
+        # and the broker cannot tell the two apart on its own (there is no
+        # session identity). Announcing without it stays idempotent, so an
         # Esc-interrupted worker still reclaims its own handle.
         exclusive = bool(args.get("exclusive"))
         with self._cond:
@@ -241,12 +241,13 @@ class Broker:
             if live is not None and not force:
                 # Idempotent re-announce is the common case and must keep
                 # working: a session Esc-interrupted mid-park re-announces the
-                # same handle at the same tier, and locking it out of its own
-                # identity would be worse than the hijack this guards against.
-                # A *different* tier means a different session took the name,
-                # which is the accident worth catching. Forgery is out of scope
-                # (ADR-0006) — an impostor announcing an identical tier is
-                # indistinguishable from the real thing and always will be.
+                # same handle at the same model slot, and locking it out of
+                # its own identity would be worse than the hijack this guards
+                # against. A *different* slot means a different session took
+                # the name, which is the accident worth catching. Forgery is
+                # out of scope (ADR-0006) — an impostor announcing an
+                # identical slot is indistinguishable from the real thing and
+                # always will be.
                 if live["model"] != model or live["effort"] != effort:
                     return _err(
                         f"handle '{handle}' is already announced as "

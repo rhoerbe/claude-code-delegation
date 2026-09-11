@@ -127,18 +127,19 @@ def main() -> int:
     print("\nannounce no longer silently overwrites:")
     b = fresh("w1")
     call(b, "claim", handle="w1", owner="dispA")
-    check("same tier re-announce succeeds (Esc-interrupt recovery)",
+    check("same model slot re-announce succeeds (Esc-interrupt recovery)",
           call(b, "announce", handle="w1", model="sonnet", effort="medium").get("ok"))
     check("and preserves the claim", owner_of(b, "w1") == "dispA")
     r = call(b, "announce", handle="w1", model="opus", effort="high")
-    check("different tier is refused", not r.get("ok"), repr(r))
+    check("different model slot is refused", not r.get("ok"), repr(r))
     # A launcher reserving a name for a NEW session must be told no even when
-    # the tier matches: two same-tier workers on one issue/phase is exactly
-    # what the ordinal suffix exists for, and the broker cannot tell that from
-    # an Esc-interrupted worker reclaiming its own handle.
+    # the slot matches: two workers of the same slot on one issue/phase is
+    # exactly what the ordinal suffix exists for, and the broker cannot tell
+    # that from an Esc-interrupted worker reclaiming its own handle.
     r = call(b, "announce", handle="w1", model="sonnet", effort="medium",
              exclusive=True)
-    check("exclusive reservation refuses an identical tier", not r.get("ok"), repr(r))
+    check("exclusive reservation refuses an identical model slot",
+          not r.get("ok"), repr(r))
     check("exclusive on a free handle succeeds",
           call(b, "announce", handle="fresh", model="sonnet", effort="medium",
                exclusive=True).get("ok"))

@@ -25,10 +25,52 @@ roster (`ccd ls`):
 ccd announce "$CCD_HANDLE" "$CCD_MODEL" "$CCD_EFFORT"
 ```
 
-This tells anyone dispatching work which handle maps to which model/effort
-tier. A dispatcher does this too — its own handle is just as much a roster
-entry as any worker's, so other participants can route tasks or results back
-to it.
+This tells anyone dispatching work which handle maps to which model slot. A
+dispatcher does this too — its own handle is just as much a roster entry as
+any worker's, so other participants can route tasks or results back to it.
+
+### Then check the announcement against what is actually running
+
+`$CCD_MODEL`/`$CCD_EFFORT` are what your launcher *declared*. Nothing reads
+them back off the running session, so they can drift from what is actually
+serving this turn — a wrong slot on the roster makes every dispatcher route
+by it wrongly. Immediately after announcing, check for drift and report it in
+your own terminal.
+
+One tool call gives you both halves of the answer:
+
+```
+if [ "$CLAUDE_EFFORT" = "$CCD_EFFORT" ]; then
+  echo "ccd: effort ok ($CCD_EFFORT)"
+else
+  echo "ccd: EFFORT MISMATCH - announced $CCD_EFFORT, running $CLAUDE_EFFORT"
+fi
+echo "ccd: backend ${ANTHROPIC_BASE_URL:-first-party}"
+```
+
+**Effort — check always.** `$CLAUDE_EFFORT` is set by Claude Code in the
+environment of every Bash tool call, per turn, *after* any silent downgrade
+for the selected model, so it is the authoritative value. `$CCD_EFFORT` is
+only what was declared, and a downgrade the launcher never saw is exactly the
+drift worth catching.
+
+**Model — check only on a bare `claude` launch.** Under a remapped backend
+your own self-report is wrong: the session believes it is the model it asked
+for while a different one serves it, so comparing would report a mismatch on
+every correctly configured session. `ANTHROPIC_BASE_URL` is the tell — a
+remap has to point the client somewhere else to work. When the line above
+prints `backend first-party`, compare `$CCD_MODEL` against the model you know
+yourself to be. When it prints anything else, say the model went unchecked
+rather than reporting agreement you did not establish.
+
+Then state the result in your reply — declared pair, actual pair, one line —
+so the human at your TUI can fix the launch.
+
+**Never re-announce a corrected pair.** The warning is for the human; it does
+not mutate the roster. The broker rejects a re-announce of a live handle at a
+different model slot, and getting it through needs `force` — the same flag
+that lets an impostor seize a live handle, far too blunt for routine drift.
+Leave the roster showing what was declared and let the human relaunch.
 
 ## 2. End every turn parked in `recv`
 
@@ -66,6 +108,11 @@ farmed a subtask out to.
   roster of announced handles with their model/effort), `ccd send <worker>
   "<subtask>"`, then `recv` again to wait for either the worker's result or
   further instructions.
+- On being told in plain language to take workers on ("claim w1 and w2",
+  "those two are yours") — from the human at your TUI or from another
+  session: run `ccd claim <worker>` once per worker. Your own `$CCD_HANDLE`
+  is the default owner, so no dispatcher argument is needed. A worker
+  announces unowned and nothing routes to you until you claim it.
 - On a result from a worker: read it, fold it into your overall task (and
   `ccd send` a follow-up to that or another worker if more work is needed,
   or `ccd send` the final answer back to whoever originally asked), then
