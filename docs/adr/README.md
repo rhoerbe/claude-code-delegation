@@ -15,3 +15,4 @@ implementing design and `../../PRD.md` for the original requirements.
 | [0006](0006-one-boundary-uid-authenticates-claims-authorize.md) | One security boundary: peer-uid authenticates, claims authorize |
 | [0007](0007-affiliation-is-claimed-not-declared.md) | A worker's dispatcher is claimed, not declared |
 | [0008](0008-dashboard-is-metadata-wide-content-scoped.md) | The fleet dashboard is system-wide in metadata, scoped in content |
+| [0009](0009-a-launch-picks-one-named-mapping.md) | A launch picks one named mapping, not a slot and an effort |
