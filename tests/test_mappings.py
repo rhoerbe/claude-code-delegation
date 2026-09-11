@@ -152,7 +152,7 @@ def run(tmp: Path) -> int:
           m.display(entry(display="Haiku/Low")) == "Sonnet/Medium")
     check("remapped renders both halves with an arrow",
           m.display(entry(slot="opus", effort="max",
-                          model="moonshotai/kimi-k3")) == "Opus/Max → Kimi-K3")
+                          model="moonshotai/kimi-k3")) == "Opus/Max → kimi-k3")
     check("first-party collapses, rather than saying it twice",
           m.display(entry(slot="sonnet", effort="medium",
                           model="claude-sonnet-5")) == "Sonnet/Medium")
@@ -160,10 +160,18 @@ def run(tmp: Path) -> int:
     # worth showing, not hiding, so it does not collapse.
     check("a first-party model naming another slot does not collapse",
           m.display(entry(slot="opus", effort="xhigh",
-                          model="claude-sonnet-5")) == "Opus/Xhigh → Claude-Sonnet-5")
+                          model="claude-sonnet-5")) == "Opus/Xhigh → claude-sonnet-5")
     check("the provider prefix is dropped",
           m.display(entry(slot="sonnet", effort="high",
-                          model="z-ai/glm-5.3-flash")) == "Sonnet/High → Glm-5.3-Flash")
+                          model="z-ai/glm-5.3-flash")) == "Sonnet/High → glm-5.3-flash")
+    # The label has to stay greppable: this same string is the manifest's
+    # `model`, `ccd ls`'s resolved-model column, and the transcript. Restyling
+    # it would need no table but would invent a name.
+    check("the model id is rendered exactly as its provider writes it", all(
+        m.display(entry(slot="opus", effort="max", model=mid)).split("→ ")[1]
+        == mid.rsplit("/", 1)[-1]
+        for mid in ("moonshotai/kimi-k3", "z-ai/glm-5.3-flash", "GLM-4.6",
+                    "deepseek/DeepSeek-V4", "mistral-large-2512")))
     check("every slot and effort renders title-cased",
           {m.display(entry(slot=s, effort=e, model="x/y")).split(" ")[0]
            for s in m.SLOTS for e in m.EFFORTS}

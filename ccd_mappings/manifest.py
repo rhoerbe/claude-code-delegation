@@ -197,20 +197,22 @@ def display(entry: dict) -> str:
 
     Remapped, where the model is not what the slot names:
 
-        Opus/Max → Kimi-K3
+        Opus/Max → kimi-k3
 
     First-party, where the slot and the model say the same thing, collapsed —
-    rendering "Sonnet/Medium → Claude-Sonnet-5" would say it twice:
+    rendering "Sonnet/Medium → claude-sonnet-5" would say it twice:
 
         Sonnet/Medium
     """
     slot = (entry.get("slot") or "").strip()
     effort = (entry.get("effort") or "").strip()
     model = (entry.get("model") or "").strip()
+    # The left half is ours — a slot and an effort from closed vocabularies
+    # this project defines — so title-casing it cannot get a name wrong.
     asked = f"{slot.title()}/{effort.title()}"
     if not model or _names_the_slot(slot, model):
         return asked
-    return f"{asked} → {_pretty_model(model)}"
+    return f"{asked} → {_short_model(model)}"
 
 
 def _names_the_slot(slot: str, model: str) -> bool:
@@ -225,15 +227,17 @@ def _names_the_slot(slot: str, model: str) -> bool:
     return slot.lower() in model.lower().replace("_", "-").split("-")
 
 
-def _pretty_model(model: str) -> str:
-    """`moonshotai/kimi-k3` -> `Kimi-K3`. Mechanical: no model-name table.
+def _short_model(model: str) -> str:
+    """`moonshotai/kimi-k3` -> `kimi-k3`. Shortened, never restyled.
 
-    Acronyms therefore come out title-cased like any other word (`glm-5.3` ->
-    `Glm-5.3`). Casing them correctly would mean shipping a list of model
-    families, which is exactly the host-specific knowledge this repo keeps out.
+    The id is shown as its provider writes it. Title-casing it would need no
+    table but would *invent* a name — `glm-5.3-flash` is not `Glm-5.3-Flash`
+    to anyone — and a label nobody can grep for is a recurring papercut, since
+    this same string appears in the manifest's `model`, in `ccd ls`, and in the
+    transcript. Dropping the provider prefix is shortening, not renaming, and
+    the full id is one column away.
     """
-    tail = model.rsplit("/", 1)[-1]
-    return "-".join(part.title() for part in tail.split("-"))
+    return model.rsplit("/", 1)[-1]
 
 
 def resolve_launcher(entry: dict) -> str:

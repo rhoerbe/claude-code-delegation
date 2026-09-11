@@ -197,19 +197,26 @@ Two shapes come out of it:
 
 | entry | label |
 |---|---|
-| slot `opus`, effort `max`, model `moonshotai/kimi-k3` | `Opus/Max → Kimi-K3` |
+| slot `opus`, effort `max`, model `moonshotai/kimi-k3` | `Opus/Max → kimi-k3` |
 | slot `sonnet`, effort `medium`, model `claude-sonnet-5` | `Sonnet/Medium` |
 
 The first-party case collapses: when the model is the one the slot already
-names, `Sonnet/Medium → Claude-Sonnet-5` would say it twice. An entry whose
+names, `Sonnet/Medium → claude-sonnet-5` would say it twice. An entry whose
 first-party model names a *different* slot than it asks for does **not**
-collapse — `Opus/Xhigh → Claude-Sonnet-5` — because that pairing is worth
+collapse — `Opus/Xhigh → claude-sonnet-5` — because that pairing is worth
 showing, not hiding.
 
-The model name is prettified mechanically: last path segment, title-cased per
-word. There is no table of model families, so an acronym comes out like any
-other word (`z-ai/glm-5.3-flash` → `Glm-5.3-Flash`). Shipping such a table
-would be exactly the provider-specific knowledge this repo keeps out.
+**Model ids are shown as their provider writes them**, shortened to the last
+path segment and otherwise untouched: `moonshotai/kimi-k3` → `kimi-k3`,
+`z-ai/glm-5.3-flash` → `glm-5.3-flash`. Restyling them would need no table but
+would invent a name — `glm-5.3-flash` is not `Glm-5.3-Flash` to anyone — and
+the label would stop matching the string a reader meets everywhere else: the
+manifest's own `model`, `ccd ls`, the transcript. Rendering it verbatim keeps
+the label greppable and needs no knowledge of model families.
+
+The slot and effort half *is* title-cased, because those come from closed
+vocabularies this project defines — `Opus/Max` is not a third party's product
+name, so there is nothing there to get wrong.
 
 If an entry needs a human aside, that is what `notes` is for — and `notes` is
 visibly not the label, which is the difference that matters.
@@ -268,8 +275,8 @@ A picker renders that file as:
 ```
 1. Sonnet/Medium
 2. Opus/High
-3. Opus/Max → Kimi-K3
-4. Sonnet/High → Glm-5.3-Flash
+3. Opus/Max → kimi-k3
+4. Sonnet/High → glm-5.3-flash
 ```
 
 ### Validation, and where it lives
