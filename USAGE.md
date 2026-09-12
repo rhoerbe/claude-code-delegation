@@ -36,11 +36,12 @@ each one differs, though:
   from a shell too, but belong in the dispatcher's own window (see [Assigning
   workers to the dispatcher](#assigning-workers-to-the-dispatcher)), since
   they name a dispatcher and it is the obvious one.
-- **The participant session itself**, once it has loaded the `ccd-worker`
-  skill: `ccd announce`, `ccd recv`, `ccd send`, `ccd ret`. Sessions
+- **The participant session itself**, once it has loaded its skill
+  (`ccd-dispatcher` or `ccd-worker`): `ccd announce`, `ccd recv`, `ccd send`,
+  `ccd ret`. Sessions
   communicate only through their own `ccd` tool calls (`PLAN-ccd-v2.md` §0) —
   you never type these by hand; the skill (loaded by the trailing
-  `-- "/ccd-worker"` in [Starting a dispatcher](#starting-a-dispatcher)) is
+  `-- "/ccd-dispatcher"` in [Starting a dispatcher](#starting-a-dispatcher)) is
   what drives the loop turn after turn.
 
 [The loop, end to end](#the-loop-end-to-end) below shows the second kind —
@@ -100,7 +101,7 @@ list and returns the id of the one you chose — here `kimi-k3-max`. Hand that
 id to `ccd launch`:
 
 ```console
-$ ccd launch kimi-k3-max --issue 119 --phase 3 -- "/ccd-worker"
+$ ccd launch kimi-k3-max --issue 119 --phase 3 -- "/ccd-dispatcher"
 ```
 
 That is the whole launch. You stated the model and effort **once**, by picking
@@ -125,10 +126,16 @@ them, and nothing asks you to repeat them.
   `--name`, `--model` and `--effort`.
 
 Anything after `--` is passed through to that launcher untouched. That is how
-the trailing `"/ccd-worker"` above reaches the session — it loads the skill and
-starts the loop immediately, instead of your having to tell the session by
-hand afterwards. **Without it the session starts but never announces**, so it
-never appears on the roster.
+the trailing `"/ccd-dispatcher"` above reaches the session — it loads the
+skill and puts the session to work immediately, instead of your having to tell
+it by hand afterwards. **Without it the session starts but never announces**,
+so it never appears on the roster.
+
+There are two participant skills and the trailing prompt is how you choose:
+`/ccd-dispatcher` for the session you work in, which hands tasks out and
+collects results, and `/ccd-worker` for a session that performs tasks it is
+sent. They are different jobs, not one job with two settings — a dispatcher's
+input is you at the keyboard, a worker's is its own queue.
 
 ### One variable, so nothing can disagree
 
@@ -162,9 +169,10 @@ Start as many as you want. Each gets its own derived handle, so nothing
 collides. A dispatcher usually runs at a more capable mapping than the workers
 it farms tasks out to, but nothing enforces that.
 
-The skill is installed at `~/.claude/skills/ccd-worker/SKILL.md` — a
-**directory containing `SKILL.md`**, which is the shape the loader scans for.
-A flat `ccd-worker.md` file is silently never discovered.
+Each skill is installed at `~/.claude/skills/<name>/SKILL.md` —
+`ccd-dispatcher/SKILL.md` and `ccd-worker/SKILL.md`, each a **directory
+containing `SKILL.md`**, which is the shape the loader scans for. A flat
+`ccd-worker.md` file is silently never discovered.
 
 > **Do not use `claude --bg` for either role.** It propagates `--name` but not
 > `CCD_MAPPING`/`CCD_HANDLE`, so the session cannot announce; and a
@@ -261,7 +269,7 @@ claimed w2 for disp
 
 You can also just tell the dispatcher in plain language — "claim w1 and w2" —
 and the skill runs the same commands itself
-([skills/ccd-worker.md](skills/ccd-worker.md) §3).
+([skills/ccd-dispatcher.md](skills/ccd-dispatcher.md) §3).
 
 That is the whole assignment step: one `ccd claim` per worker, in any order,
 however many you want. The ownership mechanics it sets up (what claiming
@@ -462,7 +470,8 @@ message simply queues for a session that will never collect it.
 | A task arrives twice | Known, unexplained — see issue #3. Every re-queue is logged to the broker's stderr with its reason; the log sits next to the pidfile. |
 | `ccd dashboard` shows `unknown` status and no cost for a handle | That session announced no working directory or session id — announced by hand from a shell, or running on a backend that keeps no Claude Code transcript. Nothing is broken; there is simply nothing to read. |
 | `ccd dashboard --write` refuses the path | It is inside a git working tree, deliberately and without an override. Write it to a state directory instead. |
-| The worker never loads the skill | It is installed as a flat `.md` instead of `ccd-worker/SKILL.md`. |
+| A participant never loads its skill | It is installed as a flat `.md` instead of `ccd-worker/SKILL.md` or `ccd-dispatcher/SKILL.md`. |
+| A fresh session invents a task instead of announcing | It loaded a skill older than #27, which described handling tasks without saying none had been given. Both skills now open by saying so. |
 | `ccd broker start` says it is already running | A live socket exists. `ccd broker status`, and check for a stray second broker. |
 
 ## Verifying the zero-token claim
