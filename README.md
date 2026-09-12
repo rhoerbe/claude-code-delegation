@@ -106,8 +106,8 @@ ccd broker stop
 
 | var | used by | default | meaning |
 |---|---|---|---|
-| `CCD_SOCKET` | `ccd`, `ccd_broker` | `${XDG_RUNTIME_DIR:-/tmp}/ccd-$USER.sock` | Unix socket path the broker listens on and the CLI connects to. Created mode `0600`; the broker rejects connections from other uids (`SO_PEERCRED`). |
-| `CCD_PIDFILE` | `ccd broker start/stop` | `${XDG_RUNTIME_DIR:-/tmp}/ccd-$USER.pid` | Where `ccd broker start` records the broker's pid so `ccd broker stop` can find and signal it. The broker's stdout/stderr log goes next to it, at the same path with `.log` in place of `.pid`. |
+| `CCD_SOCKET` | `ccd`, `ccd_broker` | `$XDG_RUNTIME_DIR`, else `/run/user/<uid>`, else `/tmp`, as `ccd-<account>.sock` | Unix socket path the broker listens on and the CLI connects to. Created mode `0600`; the broker rejects connections from other uids (`SO_PEERCRED`). |
+| `CCD_PIDFILE` | `ccd broker start/stop` | the socket path with `.pid` in place of `.sock` | Where `ccd broker start` records the broker's pid so `ccd broker stop` can find and signal it. The broker's stdout/stderr log goes next to it, at the same path with `.log` in place of `.pid`. |
 | `CCD_HANDLE` | `ccd recv`/`announce`/`ret` | *(none — required if `<handle>` isn't passed positionally)* | Default handle for `recv`/`announce`/`ret` so a worker's skill/script doesn't have to hardcode it. |
 | `CCD_TRANSCRIPT_ROOT` | `ccd dashboard` | `${CLAUDE_CONFIG_DIR:-~/.claude}/projects` | Where Claude Code keeps per-project transcript directories. The dashboard is the one component that reads them (ADR-0008) — the broker and the rest of the CLI stay backend-agnostic and read no Claude-internal state at all. |
 | `CLAUDE_CODE_SESSION_ID` | `ccd announce` | *(set by Claude Code inside a session; empty elsewhere)* | Passed through to the broker so the dashboard can find that session's transcript. Announcing from a plain shell sends nothing and leaves whatever the session already reported. |
