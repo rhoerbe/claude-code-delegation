@@ -28,18 +28,20 @@ call — the invocation and its output look identical either way, which is why
 both are shown the same console-block style throughout. Who actually runs
 each one differs, though:
 
-- **You, from any shell:** `ccd broker start/stop/status`, `ccd ls`, `ccd
-  dashboard`, and Esc-interrupt steering. These are setup and observability —
-  things done from outside the agent sessions. `ccd claim`/`ccd release` work
+- **You, from any shell:** `ccd broker start/stop/status`, `ccd pick`, `ccd
+  launch`, `ccd ls`, `ccd dashboard`, and Esc-interrupt steering. These are
+  setup, starting sessions, and observability — things done from outside the
+  agent sessions. `ccd pick` additionally needs a real terminal (see
+  [`ccd pick` is interactive, deliberately](#ccd-pick-is-interactive-deliberately)). `ccd claim`/`ccd release` work
   from a shell too, but belong in the dispatcher's own window (see [Assigning
   workers to the dispatcher](#assigning-workers-to-the-dispatcher)), since
   they name a dispatcher and it is the obvious one.
 - **The participant session itself**, once it has loaded the `ccd-worker`
   skill: `ccd announce`, `ccd recv`, `ccd send`, `ccd ret`. Sessions
   communicate only through their own `ccd` tool calls (`PLAN-ccd-v2.md` §0) —
-  you never type these by hand; the skill (loaded via `/ccd-worker` in
-  [Starting a dispatcher](#starting-a-dispatcher)) is what drives the loop
-  turn after turn.
+  you never type these by hand; the skill (loaded by the trailing
+  `-- "/ccd-worker"` in [Starting a dispatcher](#starting-a-dispatcher)) is
+  what drives the loop turn after turn.
 
 [The loop, end to end](#the-loop-end-to-end) below shows the second kind —
 read `$ ccd send w1 "..." -f disp` there as *the dispatcher session's own tool
@@ -51,25 +53,27 @@ call*, not something you type at a shell.
 $ ccd broker start
 ccd broker: started (pid 12345, socket /run/user/1000/ccd-alice.sock)
 $ ccd ping
-ok (ccd-broker 1.0.0)
+ok (ccd-broker 1.4.0) up 0m
 ```
 
-**Pin `CCD_SOCKET` explicitly** if anything will call `ccd` from inside an agent
-session rather than a login shell. The default is
-`$XDG_RUNTIME_DIR/ccd-<account>.sock`, and a tool-invoked subshell does not
-reliably inherit `XDG_RUNTIME_DIR`. Since 1.5.1 the fallback resolves
-`/run/user/<uid>` instead of jumping straight to `/tmp`, so the common case now
-agrees with the broker by itself; pinning `CCD_SOCKET` is still worth doing where
-a wrapper can, because an explicit address cannot drift at all. Before that fix,
-a missing `XDG_RUNTIME_DIR` made `ccd` silently resolve
-to `/tmp` and **auto-starts a second broker there**. Nothing errors. A handle
-registered against one broker simply never sees messages sent to the other:
+The socket address is `$XDG_RUNTIME_DIR/ccd-<account>.sock`, and when that
+variable is missing — Claude Code's Bash tool strips it — `ccd` now resolves
+`/run/user/<uid>` from the account id instead. That is the same address the
+broker computes for itself, so the common case agrees without your help.
+
+It did not always. Earlier, a missing `XDG_RUNTIME_DIR` sent the client to
+`/tmp`, where it **started a second broker**. Nothing errored: a handle
+registered against one broker simply never saw messages sent to the other,
+which is the single most common way a working setup appears to be broken. If
+you are chasing that symptom, check that both sides resolve the same path.
+
+`ccd launch` pins `CCD_SOCKET` into every session it starts, so sessions
+launched that way are addressed correctly by construction. Pin it yourself for
+a session you start by hand:
 
 ```bash
 export CCD_SOCKET="/run/user/$(id -u)/ccd-$USER.sock"
 ```
-
-This is the single most common way a working setup appears to be broken.
 
 ## Starting a dispatcher
 
@@ -77,89 +81,168 @@ This is the single most common way a working setup appears to be broken.
 whenever it appears, so dispatcher-first and worker-first both work. This
 walkthrough starts at the dispatcher because the *task* does.
 
-A participant is an ordinary interactive Claude Code session, started in its
-own terminal or tmux window, with its identity in the environment:
+A participant is an ordinary interactive Claude Code session. You start one by
+**picking a mapping**, and everything else follows from that one choice:
 
-```bash
-export CCD_SOCKET="/run/user/$(id -u)/ccd-$USER.sock"
-export CCD_HANDLE=disp CCD_MODEL=opus CCD_EFFORT=high
-claude --model opus --effort high --name disp "/ccd-worker"
+```console
+$ ccd pick
+1. claude-sonnet-5/medium
+2. claude-opus-5/high
+3. kimi-k3/max
+4. glm-5.3/high
+choice [1-4]: 3
+kimi-k3-max
 ```
 
-Those are the Claude Code CLI's own flags, not `ccd`'s — worth spelling out,
-since it is easy to set only the `CCD_*` env vars and assume they do this too:
+A **mapping** names one way to start a session: which launcher runs, which
+model it is told to use, and what effort it requests. `ccd pick` prints the
+list and returns the id of the one you chose — here `kimi-k3-max`. Hand that
+id to `ccd launch`:
 
-- `--model`/`--effort` pick what actually runs this session. `CCD_MODEL`/
-  `CCD_EFFORT` are a separate convention that `ccd` itself never reads (see
-  README's environment-variable table) — the worker skill echoes `CCD_EFFORT`
-  onto the roster via `ccd announce` so other participants can see it.
-  `CCD_MODEL` stays local: the roster carries no model-slot field (broker
-  1.3, claude-code-delegation#13 — a live probe found naming a model directly
-  reaches it exactly as well as routing through a slot), so `CCD_MODEL` is
-  only ever compared against what is actually running, in the skill's own
-  self-check below. Both pairs still describe one decision, so derive them
-  from one input rather than typing each of the four by hand: that is [what a
-  launch wrapper should do for you](#what-a-launch-wrapper-should-do-for-you).
-  The skill checks the pair it declared against what is actually running and
-  warns in its own terminal if they disagree
-  ([skills/ccd-worker.md](skills/ccd-worker.md) §1).
-- `--name` sets Claude Code's own display name — shown in the prompt box, the
-  `/resume` picker, and the terminal title. Without it a session has no
-  default name, which gets confusing fast once more than one window is open.
-  It is independent of `CCD_HANDLE`; matching them (as above) is just
-  convenient, not required.
-- Passing `/ccd-worker` as the trailing prompt loads the skill and starts the
-  loop immediately, instead of needing to tell the session by hand afterward.
+```console
+$ ccd launch kimi-k3-max --issue 119 --phase 3 -- "/ccd-worker"
+```
 
-There is nothing else dispatcher-specific to configure. A dispatcher runs the
-same skill as a worker (it covers both roles; see
-[skills/ccd-worker.md](skills/ccd-worker.md) §3) and earns the name by what it
-does with an incoming message — farm it out, or fold a result back in — and by
-claiming workers. A dispatcher usually runs at a more capable model slot than
-the workers it farms tasks out to, but nothing enforces that.
+That is the whole launch. You stated the model and effort **once**, by picking
+them, and nothing asks you to repeat them.
 
-### What a launch wrapper should do for you
+### What `ccd launch` does for you
 
-Four values that must agree, retyped into every window, is how a session ends
-up running an effort it never declared, or a launch failing in the backend's
-own words instead of ccd's. Nothing in this repo ships a wrapper — deployment
-is deliberately out of scope (see README's *What this repo is not*) — but
-whatever you write locally should do three things:
+- **Derives the handle** as `<issue>-<phase>-<mapping-id>` plus the entry's
+  billing tag when it has one — `119-3-kimi-k3-max-api` above. It prompts for
+  the issue and phase when you do not pass `--issue`/`--phase`, and
+  `--handle NAME` overrides the whole shape when you want a plain name.
+- **Reserves that handle** with `ccd announce --exclusive` before starting
+  anything, so two windows started from the same mapping cannot race for one
+  queue. If the name is taken it appends an ordinal and takes the next one —
+  a second `119-3-kimi-k3-max-api` becomes `119-3-kimi-k3-max-api-2`.
+- **Pins `CCD_SOCKET`** into the launched session, so it addresses the same
+  broker you are looking at.
+- **Checks the broker version** and warns if it differs from the CLI's. This
+  is advisory in both directions and never fatal: a client and broker deployed
+  one commit apart should still be able to launch.
+- **Execs the launcher the mapping names**, passing Claude Code's own
+  `--name`, `--model` and `--effort`.
 
-1. **Derive the handle once.** One input (`w1`, `disp`) becomes `CCD_HANDLE`
-   and `--name`, so the roster entry and the window title cannot drift apart.
-2. **Apply the model-slot mapping.** One slot name becomes the
-   `--model`/`--effort` flags that select what runs and the `CCD_MODEL`/
-   `CCD_EFFORT` values a worker exports — but only `CCD_EFFORT` goes on the
-   roster (the roster carries no model-slot field; `CCD_MODEL` stays local to
-   the skill's self-check — see above). One input, one mapping, no pair to
-   keep in sync by hand.
-3. **Reserve the name before exec.** `ccd announce --exclusive` takes the
-   handle while the wrapper still owns the decision, so two windows started
-   from the same slot cannot end up racing for one queue.
+Anything after `--` is passed through to that launcher untouched. That is how
+the trailing `"/ccd-worker"` above reaches the session — it loads the skill and
+starts the loop immediately, instead of your having to tell the session by
+hand afterwards. **Without it the session starts but never announces**, so it
+never appears on the roster.
+
+### One variable, so nothing can disagree
+
+The launched session carries exactly one ccd variable describing what it is:
+
+```
+CCD_MAPPING=kimi-k3-max
+```
+
+`CCD_MAPPING` **replaces** `CCD_MODEL` and `CCD_EFFORT`, and `ccd launch`
+actively removes both from the environment it hands on — so a stale pair
+exported in your shell cannot follow a session in and contradict it. That is
+the structural fix: with one variable there is nothing left to keep in sync,
+and no second place for the same fact to be stated differently. (The bug that
+started this: a worker announced itself as sonnet/medium while actually
+running Opus, because the model and effort were typed twice and the two copies
+drifted.)
+
+`CCD_HANDLE` is set too, to the handle that was derived and reserved.
 
 ## Starting a worker
 
-Same shape, same skill — only the handle and the model slot change:
+Exactly the same, with a different mapping and its own terminal or tmux
+window:
 
-```bash
-export CCD_SOCKET="/run/user/$(id -u)/ccd-$USER.sock"
-export CCD_HANDLE=w1 CCD_MODEL=sonnet CCD_EFFORT=medium
-claude --model sonnet --effort medium --name w1 "/ccd-worker"
+```console
+$ ccd launch claude-sonnet-5-medium --issue 119 --phase 3 -- "/ccd-worker"
 ```
 
-Start as many as you want, each in its own terminal or tmux window, each with
-its own `CCD_HANDLE` (`w2`, `w3`, …). The three bullets above apply unchanged.
+Start as many as you want. Each gets its own derived handle, so nothing
+collides. A dispatcher usually runs at a more capable mapping than the workers
+it farms tasks out to, but nothing enforces that.
 
 The skill is installed at `~/.claude/skills/ccd-worker/SKILL.md` — a
 **directory containing `SKILL.md`**, which is the shape the loader scans for.
 A flat `ccd-worker.md` file is silently never discovered.
 
 > **Do not use `claude --bg` for either role.** It propagates `--name` but not
-> `CCD_HANDLE`/`CCD_MODEL`/`CCD_EFFORT`, so the session cannot announce; and a
+> `CCD_MAPPING`/`CCD_HANDLE`, so the session cannot announce; and a
 > backgrounded session cannot resume itself across a usage limit, while an
 > interactive one can. Both reasons and their evidence are in
 > [ADR-0005](docs/adr/0005-participants-are-interactive-sessions.md).
+
+## The mapping list, and where it comes from
+
+`ccd pick` and `ccd launch` read a **manifest**: JSON at
+`${XDG_CONFIG_HOME:-~/.config}/ccd/mappings.json`, or wherever `$CCD_MAPPINGS`
+points. Each entry stores five things, three of them optional:
+
+| key | required | meaning |
+|---|---|---|
+| `launcher` | yes | A bare command name, found on `$PATH`. |
+| `model` | yes | The model id, passed verbatim to `--model`. |
+| `effort` | no | Omitted for models that never receive one. |
+| `billing` | no | A tag appended to derived handles, e.g. `api`, `sub`. |
+| `notes` | no | For the operator; never shown as the label. |
+
+The id and the label are **derived from those fields, never stored** — which
+is the same principle as `CCD_MAPPING` one level down: a written-down name can
+contradict the fields beside it, a computed one cannot. Ids keep dots, so
+`glm-5.3` yields `glm-5.3-high`.
+
+**This repo ships no manifest.** The format is public and the reader is here;
+producing the file is a deployment concern
+([ADR-0009](docs/adr/0009-a-launch-picks-one-named-mapping.md)), which is why
+the entries above are a small illustration rather than anyone's real list.
+A real one comes from whatever provisions your hosts. README's
+[mapping manifest](README.md#the-mapping-manifest) section has the full
+format.
+
+### `ccd pick` is interactive, deliberately
+
+`ccd pick` refuses when its input is not a terminal:
+
+```console
+$ ccd pick < /dev/null
+1. claude-sonnet-5/medium
+2. claude-opus-5/high
+3. kimi-k3/max
+4. glm-5.3/high
+ccd pick: stdin is not a terminal; pick is interactive only — pass the mapping id directly instead
+```
+
+This is a choice, not a gap. A picker that might block invisibly inside a
+script, a cron job or a CI run is worse than one that always refuses there.
+**So there is no `ccd pick | ccd launch` pipeline** — for anything scripted,
+name the mapping directly with `ccd launch <id>`, which needs no picking at
+all.
+
+Interactively, the listing and the prompt go to stderr and only the chosen id
+to stdout, so capturing the choice works:
+
+```bash
+id=$(ccd pick) && ccd launch "$id" --issue 119 --phase 3 -- "/ccd-worker"
+```
+
+## Starting a session by hand
+
+A participant that no manifest describes is fully supported — a plain shell, a
+backend that is not Claude Code, a session you started yourself and want on the
+roster. Set the handle and announce:
+
+```console
+$ export CCD_HANDLE=hand-1
+$ ccd announce a-model low
+announced hand-1 (a-model/low)
+```
+
+`ccd announce [<handle>] <model> <effort>` takes the handle from `$CCD_HANDLE`
+when you omit it. These participants are first-class by design
+([ADR-0005](docs/adr/0005-participants-are-interactive-sessions.md)) — they
+simply do not get the handle derivation, the reservation or the single
+variable, because there was no mapping to derive any of it from. Prefer
+`ccd launch` where a mapping exists; this is the road for where one does not.
 
 ## Assigning workers to the dispatcher
 

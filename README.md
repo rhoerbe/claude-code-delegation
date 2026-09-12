@@ -40,28 +40,19 @@ sketch if you are building your own, since nothing here depends on it:
 - a role that installs `skills/ccd-worker.md` as
   `~/.claude/skills/ccd-worker/SKILL.md` — the loader scans for a directory
   containing `SKILL.md`, and silently ignores a flat `.md` file;
-- a thin launch wrapper that derives the handle once, maps one model-slot name
-  onto *both* the `CCD_MODEL`/`CCD_EFFORT` it exports and the
-  `--model`/`--effort` it passes through, reserves the handle with `ccd
-  announce --exclusive`, and then execs whichever backend launcher was named,
-  so backends stay orthogonal to ccd. Deriving both pairs from one input is
-  the point: hand-matching them is how a session ends up running an effort it
-  never declared, or a launch failing in the backend's own words instead of
-  ccd's (issue #10). `CCD_MODEL` (the model-slot name) stays a real
-  environment variable this wrapper exports and the worker skill's own
-  self-check compares against, but it does not reach the roster —
-  `announce`/`ccd ls` carry `effort` (and, once a manifest exists, a resolved
-  `model` and a `mapping` id) rather than a slot name, since a live probe
-  found the slot itself added nothing a resolved model doesn't already say
-  (claude-code-delegation#13). See [`USAGE.md`](USAGE.md), *What a launch
-  wrapper should do for you*.
+- **no launch wrapper** — that used to be the third item here, and `ccd launch`
+  replaced it. Deriving the handle, reserving it with `announce --exclusive`,
+  and exec'ing the named backend launcher all ship in this repo now; what the
+  deployment layer still owns is the *manifest* those commands read (the
+  entries, the launchers, the credentials behind them). See
+  [The mapping manifest](#the-mapping-manifest).
 
 Two deployment findings worth carrying over wherever you wire this up: a
 handle must be unique among *live* sessions, since two sessions sharing one
 would silently race for the same queue; and start ccd participants as
 ordinary interactive (or tmux) sessions — `claude --bg` does not propagate
-`CCD_HANDLE`/`CCD_MODEL`/`CCD_EFFORT` into the backgrounded session, so it
-never announces onto the roster (issue #4).
+`CCD_HANDLE`/`CCD_MAPPING` into the backgrounded session, so it never
+announces onto the roster (issue #4).
 
 It also does not ship: broker persistence (queues and the roster are
 in-memory only — a broker restart empties both), multi-user auth, or any
@@ -112,8 +103,8 @@ ccd broker stop
 | `CCD_TRANSCRIPT_ROOT` | `ccd dashboard` | `${CLAUDE_CONFIG_DIR:-~/.claude}/projects` | Where Claude Code keeps per-project transcript directories. The dashboard is the one component that reads them (ADR-0008) — the broker and the rest of the CLI stay backend-agnostic and read no Claude-internal state at all. |
 | `CLAUDE_CODE_SESSION_ID` | `ccd announce` | *(set by Claude Code inside a session; empty elsewhere)* | Passed through to the broker so the dashboard can find that session's transcript. Announcing from a plain shell sends nothing and leaves whatever the session already reported. |
 | `CCD_MAPPINGS` | `ccd` (manifest reader) | `${XDG_CONFIG_HOME:-~/.config}/ccd/mappings.json` | The mapping manifest — see [The mapping manifest](#the-mapping-manifest). Read only by the CLI; the broker never sees it. Absent is not an error until something asks to pick from it. |
-| `CCD_EFFORT` | worker skill (`skills/ccd-worker.md`) convention, not read by `ccd` itself | — | Passed as the `effort` arg to `ccd announce`, so the roster (`ccd ls`) shows other participants which effort each handle carries. Nothing reads it back off the running session, so the `ccd-worker` skill compares it against `$CLAUDE_EFFORT` and warns on a mismatch. Set by whatever launches the session. |
-| `CCD_MODEL` | worker skill (`skills/ccd-worker.md`) convention, not read by `ccd` itself | — | The launcher's model-slot name (e.g. `sonnet`). Local only: it does **not** reach `ccd announce` (broker 1.3 dropped the roster's slot field, claude-code-delegation#13 — a resolved model id and a manifest `mapping` id are its replacements, once the manifest and `ccd launch` work exist). Still exported for the `ccd-worker` skill's own self-check, which compares it against the model the session believes itself to be. Set by whatever launches the session. |
+| `CCD_MAPPING` | set by `ccd launch` in the session it starts | — | The id of the mapping this session was launched from. One variable describing what the session is, so there is no second place to state it and nothing to fall out of sync (issue #10). |
+| `CCD_MODEL`, `CCD_EFFORT` | **retired** | — | The old pair, replaced by `CCD_MAPPING`. `ccd launch` actively removes both from the environment it hands on, so a stale pair exported in a shell cannot follow a session in and contradict it. Listed here only so an old script or a stale export is recognisable; do not set them. |
 
 The broker itself takes no flags or config file — `$CCD_SOCKET` is its only
 configuration surface (`ccd-broker -h` / `python3 -m ccd_broker -h` for the
@@ -437,7 +428,9 @@ $ ccd ls
 `ccd ls`'s columns are handle/effort/owner/model/pid/status, then a trailing
 drift marker (empty here — nothing to compare against without a transcript).
 The `sonnet` in `announce`'s own confirmation line is cosmetic only: that
-positional does not reach the roster (see the `CCD_MODEL` row above).
+positional does not reach the roster (broker 1.3 dropped the roster's
+model-slot field; `announce`/`ccd ls` carry `effort`, a resolved `model` and a
+`mapping` id instead).
 
 Stop the broker when done:
 
@@ -446,8 +439,9 @@ $ ccd broker stop
 ccd broker: stopped (pid 12345)
 ```
 
-In practice a worker session sets `CCD_HANDLE`/`CCD_MODEL`/`CCD_EFFORT`,
-loads the `skills/ccd-worker.md` skill, and repeats: announce once, then
+In practice a worker session is started by `ccd launch`, which sets
+`CCD_HANDLE`/`CCD_MAPPING` and loads the `skills/ccd-worker.md` skill; it then
+repeats: announce once, then
 `ccd recv "$CCD_HANDLE" -t 86400` → do the work → `ccd send <from> "<result>"`
 → `ccd recv` again, forever, until it retires on exit.
 
@@ -479,12 +473,14 @@ gets a human back in control without losing work in flight.
 ```
 ccd send <to> <msg> [-f from]
 ccd recv [<handle>] [-t timeout]      ($CCD_HANDLE is the default handle)
-ccd announce [<handle>] <model> <effort>
+ccd announce [<handle>] <model> <effort> [--exclusive] [--force]
 ccd ret [<handle>]
 ccd claim <worker> [<dispatcher>] [--force]   ($CCD_HANDLE is the dispatcher)
 ccd release <worker> [--force]
 ccd ls
 ccd dashboard [--scope <handle>] [--json] [--write <path>] [--rates <file>]
+ccd pick                              (interactive; prints the chosen id)
+ccd launch [<mapping-id>] [--issue N] [--phase N] [--handle NAME] [-- args]
 ccd ping
 ccd broker start|stop|status
 ```
@@ -506,6 +502,21 @@ working material. Content and cost come from each session's own transcript,
 never from the broker, which stores none
 ([ADR-0008](docs/adr/0008-dashboard-is-metadata-wide-content-scoped.md)). See
 [USAGE.md](USAGE.md#fleet-dashboard).
+
+`ccd pick` prints the numbered mapping list and returns the id you choose —
+the listing and prompt on stderr, the id alone on stdout, so `id=$(ccd pick)`
+captures exactly the id. It is **interactive only** and refuses when its input
+is not a terminal, so there is no `ccd pick | ccd launch` pipeline; script with
+`ccd launch <id>`, which needs no picking.
+
+`ccd launch` resolves a mapping, derives a handle from it, reserves that handle
+with `announce --exclusive`, pins `CCD_SOCKET`, and execs the launcher the
+mapping names with `--name`/`--model`/`--effort`. It sets `CCD_MAPPING` in the
+launched session and removes `CCD_MODEL`/`CCD_EFFORT`, so one variable
+describes the session and nothing can contradict it. Called with no id it
+picks first. Anything after `--` is passed to the launcher untouched — which is
+how `-- "/ccd-worker"` loads the skill. See
+[USAGE.md](USAGE.md#starting-a-dispatcher).
 
 Full protocol semantics (wire format, blocking/dequeue-on-ack, the
 `Transport` seam) are documented in `ccd_broker/broker.py` and
