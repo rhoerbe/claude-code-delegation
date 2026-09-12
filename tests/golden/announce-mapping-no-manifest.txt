@@ -1,0 +1,6 @@
+argv: ccd announce
+exit: 1
+--- stdout ---
+
+--- stderr ---
+ccd announce: $CCD_MAPPING is 'kimi-k3-1m-max' but no mapping manifest at <TMP>/mappings.json

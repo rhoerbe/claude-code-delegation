@@ -1,0 +1,5 @@
+argv: ccd ret w-map2
+exit: 0
+--- stdout ---
+retired w-map2
+--- stderr ---

@@ -1,0 +1,5 @@
+argv: ccd announce w-map3
+exit: 0
+--- stdout ---
+announced w-map3 (claude-sonnet-5/medium)
+--- stderr ---
