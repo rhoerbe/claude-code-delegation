@@ -446,8 +446,9 @@ $ ccd broker stop
 ccd broker: stopped (pid 12345)
 ```
 
-In practice a worker session sets `CCD_HANDLE`/`CCD_MODEL`/`CCD_EFFORT`,
-loads the `skills/ccd-worker.md` skill, and repeats: announce once, then
+In practice a worker session is started by `ccd launch`, which sets
+`CCD_HANDLE`/`CCD_MAPPING` and loads the `skills/ccd-worker.md` skill; it then
+repeats: announce once, then
 `ccd recv "$CCD_HANDLE" -t 86400` → do the work → `ccd send <from> "<result>"`
 → `ccd recv` again, forever, until it retires on exit.
 
@@ -479,12 +480,14 @@ gets a human back in control without losing work in flight.
 ```
 ccd send <to> <msg> [-f from]
 ccd recv [<handle>] [-t timeout]      ($CCD_HANDLE is the default handle)
-ccd announce [<handle>] <model> <effort>
+ccd announce [<handle>] <model> <effort> [--exclusive] [--force]
 ccd ret [<handle>]
 ccd claim <worker> [<dispatcher>] [--force]   ($CCD_HANDLE is the dispatcher)
 ccd release <worker> [--force]
 ccd ls
 ccd dashboard [--scope <handle>] [--json] [--write <path>] [--rates <file>]
+ccd pick                              (interactive; prints the chosen id)
+ccd launch [<mapping-id>] [--issue N] [--phase N] [--handle NAME] [-- args]
 ccd ping
 ccd broker start|stop|status
 ```
@@ -506,6 +509,21 @@ working material. Content and cost come from each session's own transcript,
 never from the broker, which stores none
 ([ADR-0008](docs/adr/0008-dashboard-is-metadata-wide-content-scoped.md)). See
 [USAGE.md](USAGE.md#fleet-dashboard).
+
+`ccd pick` prints the numbered mapping list and returns the id you choose —
+the listing and prompt on stderr, the id alone on stdout, so `id=$(ccd pick)`
+captures exactly the id. It is **interactive only** and refuses when its input
+is not a terminal, so there is no `ccd pick | ccd launch` pipeline; script with
+`ccd launch <id>`, which needs no picking.
+
+`ccd launch` resolves a mapping, derives a handle from it, reserves that handle
+with `announce --exclusive`, pins `CCD_SOCKET`, and execs the launcher the
+mapping names with `--name`/`--model`/`--effort`. It sets `CCD_MAPPING` in the
+launched session and removes `CCD_MODEL`/`CCD_EFFORT`, so one variable
+describes the session and nothing can contradict it. Called with no id it
+picks first. Anything after `--` is passed to the launcher untouched — which is
+how `-- "/ccd-worker"` loads the skill. See
+[USAGE.md](USAGE.md#starting-a-dispatcher).
 
 Full protocol semantics (wire format, blocking/dequeue-on-ack, the
 `Transport` seam) are documented in `ccd_broker/broker.py` and
