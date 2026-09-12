@@ -123,7 +123,7 @@ from typing import Any, Callable, Optional, Protocol, runtime_checkable
 # not a slot alias — "slot" was tried and dropped before release, see the
 # module docstring's Vocabulary section); roster reads lazily reap a dead
 # pid (claude-code-delegation#13).
-VERSION = "1.4.0"
+VERSION = "1.6.0"
 
 #: `recv` timeout when the client does not supply one (24h — a parked worker).
 DEFAULT_RECV_TIMEOUT = 86400.0
