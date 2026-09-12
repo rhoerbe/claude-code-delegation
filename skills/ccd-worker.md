@@ -22,67 +22,80 @@ Your first action in the session is to announce yourself so you appear on the
 roster (`ccd ls`):
 
 ```
-ccd announce "$CCD_HANDLE" "$CCD_MODEL" "$CCD_EFFORT"
+ccd announce
 ```
 
-This declares your effort on the roster (`ccd ls`), so anyone dispatching
-work can see it. A dispatcher does this too — its own handle is just as much
-a roster entry as any worker's, so other participants can route tasks or
-results back to it.
+No arguments. Your launcher put the whole launch decision in `$CCD_MAPPING`,
+and `ccd announce` resolves the model and effort from it — so there is nothing
+for you to restate, and nothing that can disagree with what you were actually
+started as. `$CCD_HANDLE` supplies the handle.
 
-The middle positional (your launcher's model-slot name) does not reach the
-roster at all — broker 1.3 dropped that field (claude-code-delegation#13: a
-live probe showed naming a model directly reaches it exactly as well as
-routing through a slot, so the roster carries `effort` and, once phase 2/4's
-manifest and launcher work exist, a resolved `model` and a `mapping` id
-instead). Passing `$CCD_MODEL` here still matters, though: it is still what
-the self-check right below compares against — that check is local to this
-terminal and never touches the roster.
+This puts your effort and your resolved model on the roster (`ccd ls`), so
+anyone dispatching work can see them. A dispatcher does this too — its own
+handle is just as much a roster entry as any worker's, so other participants
+can route tasks or results back to it.
+
+If you were started by hand rather than by `ccd launch`, there is no mapping
+to resolve and you pass them yourself: `ccd announce <model> <effort>`. That
+path is fully supported and is what a plain shell or a non-Claude-Code backend
+uses. Explicitly typed values always win over `$CCD_MAPPING`.
 
 ### Then check the announcement against what is actually running
 
-`$CCD_MODEL`/`$CCD_EFFORT` are what your launcher *declared*. Nothing reads
-them back off the running session, so they can drift from what is actually
-serving this turn — a wrong effort on the roster makes every dispatcher
-route by it wrongly (the roster does not carry a model at all yet, so a
-model drift has no roster consequence — see above — but is still worth
-catching for the human at your TUI). Immediately after announcing, check for
-drift and report it in your own terminal.
+What the roster now holds is what your launcher *declared*. Nothing reads it
+back off the running session, so it can drift from what is actually serving
+this turn — and a wrong effort on the roster makes every dispatcher route by
+it wrongly. Immediately after announcing, check for drift and report it in
+your own terminal.
 
-One tool call gives you both halves of the answer:
+Read your own row back and compare:
 
 ```
-if [ "$CLAUDE_EFFORT" = "$CCD_EFFORT" ]; then
-  echo "ccd: effort ok ($CCD_EFFORT)"
+row="$(ccd ls | awk -F'\t' -v h="$CCD_HANDLE" '$1==h')"
+declared_effort="$(printf '%s' "$row" | cut -f2)"
+declared_model="$(printf '%s' "$row" | cut -f4)"
+if [ "$declared_effort" = "-" ]; then
+  echo "ccd: no effort declared (this mapping sends none); running ${CLAUDE_EFFORT:-unknown}"
+elif [ "$declared_effort" = "$CLAUDE_EFFORT" ]; then
+  echo "ccd: effort ok ($declared_effort)"
 else
-  echo "ccd: EFFORT MISMATCH - announced $CCD_EFFORT, running $CLAUDE_EFFORT"
+  echo "ccd: EFFORT MISMATCH - roster says $declared_effort, running $CLAUDE_EFFORT"
 fi
-echo "ccd: backend ${ANTHROPIC_BASE_URL:-first-party}"
+echo "ccd: roster model ${declared_model}; backend ${ANTHROPIC_BASE_URL:-first-party}"
 ```
+
+This reads the roster rather than an environment variable, which is both
+sturdier and more to the point: the roster is what other participants actually
+route by, so checking it catches a wrong entry however it got there. (It
+replaces a comparison against `$CCD_EFFORT`, which no longer exists — `ccd
+launch` removes it in favour of the single `$CCD_MAPPING`.)
 
 **Effort — check always.** `$CLAUDE_EFFORT` is set by Claude Code in the
 environment of every Bash tool call, per turn, *after* any silent downgrade
-for the selected model, so it is the authoritative value. `$CCD_EFFORT` is
+for the selected model, so it is the authoritative value. The roster holds
 only what was declared, and a downgrade the launcher never saw is exactly the
-drift worth catching.
+drift worth catching. A mapping with no effort at all (`claude-haiku-4-5` is
+the real case — the client never sends one for it) shows `-` and is not a
+mismatch; there was nothing to disagree with.
 
 **Model — check only on a bare `claude` launch.** Under a remapped backend
 your own self-report is wrong: the session believes it is the model it asked
 for while a different one serves it, so comparing would report a mismatch on
 every correctly configured session. `ANTHROPIC_BASE_URL` is the tell — a
 remap has to point the client somewhere else to work. When the line above
-prints `backend first-party`, compare `$CCD_MODEL` against the model you know
-yourself to be. When it prints anything else, say the model went unchecked
-rather than reporting agreement you did not establish.
+prints `backend first-party`, compare the roster model against the model you
+know yourself to be. When it prints anything else, say the model went
+unchecked rather than reporting agreement you did not establish.
 
-Then state the result in your reply — declared pair, actual pair, one line —
-so the human at your TUI can fix the launch.
+Then state the result in your reply — declared, actual, one line — so the
+human at your TUI can fix the launch.
 
 **Never re-announce a corrected pair.** The warning is for the human; it does
 not mutate the roster. The broker rejects a re-announce of a live handle at a
-different effort, and getting it through needs `force` — the same flag that
-lets an impostor seize a live handle, far too blunt for routine drift. Leave
-the roster showing what was declared and let the human relaunch.
+different effort or a different declared model, and getting it through needs
+`force` — the same flag that lets an impostor seize a live handle, far too
+blunt for routine drift. Leave the roster showing what was declared and let
+the human relaunch.
 
 ## 2. End every turn parked in `recv`
 
