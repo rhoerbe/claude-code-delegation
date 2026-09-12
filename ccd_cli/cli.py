@@ -33,7 +33,8 @@ USAGE = """usage: ccd <subcommand> [args]
 
   ccd send <to> <msg> [-f from]
   ccd recv [<handle>] [-t timeout]      ($CCD_HANDLE is the default handle)
-  ccd announce [<handle>] <model> <effort> [--exclusive] [--force]
+  ccd announce [[<handle>] <model> <effort>] [--exclusive] [--force]
+                                        ($CCD_MAPPING supplies model/effort)
   ccd ret [<handle>]
   ccd claim <worker> [<dispatcher>] [--force]
   ccd release <worker> [--force]
@@ -155,6 +156,43 @@ def cmd_recv(argv: list) -> int:
     return 1
 
 
+def _mapping_model_effort(ident: str):
+    """(model, effort) for a mapping id, or None after saying why.
+
+    Failing loudly is the point. The bug this replaces was a session
+    announcing two empty strings and landing on the roster with no effort at
+    all — silently, looking fine. Anything that goes wrong resolving a mapping
+    is louder than that by construction.
+
+    An entry with no effort (claude-haiku-4-5 is the real one: the client
+    never sends effort for it) yields "", which is what the roster already
+    stores for a handle that declared none — `effort` crosses the wire through
+    the broker's plain text coercion, where a missing key and an empty string
+    are the same value. So there is nothing to distinguish here and nothing
+    lost by sending "".
+    """
+    from ccd_mappings import manifest as m
+
+    try:
+        doc = m.load()
+    except FileNotFoundError as exc:
+        # load() raises for a missing or malformed file; validate() would have
+        # returned a list of problems instead. Only load() is used here.
+        _err(f"ccd announce: $CCD_MAPPING is {ident!r} but {exc}")
+        return None
+    except m.ManifestError as exc:
+        _err(f"ccd announce: $CCD_MAPPING is {ident!r} but {exc}")
+        return None
+
+    entry = m.find(doc, ident)
+    if entry is None:
+        _err(f"ccd announce: no mapping {ident!r} in the manifest "
+             f"($CCD_MAPPING); retire the stale value or pass the model and "
+             f"effort explicitly")
+        return None
+    return entry.get("model") or "", entry.get("effort") or ""
+
+
 def cmd_announce(argv: list) -> int:
     exclusive = False
     force = False
@@ -174,14 +212,31 @@ def cmd_announce(argv: list) -> int:
         else:
             positional.append(arg)
 
+    # Explicit positionals always win: an operator typing values means them,
+    # and a mapping resolved behind their back would be the same
+    # stated-twice-and-disagreeing failure this whole change exists to end,
+    # just with the CLI as the second speaker.
+    mapping = os.environ.get("CCD_MAPPING") or ""
     if len(positional) == 3:
         handle, model, effort = positional
     elif len(positional) == 2:
         handle = _env_handle()
         model, effort = positional
+    elif mapping and len(positional) <= 1:
+        # `ccd launch` put the whole launch decision in one variable, so a
+        # session started that way already carries everything an announce
+        # needs. Restating it on the command line would put the fact in two
+        # places again — one layer down from the bug this replaced, but the
+        # same bug (#10).
+        handle = positional[0] if positional else _env_handle()
+        resolved = _mapping_model_effort(mapping)
+        if resolved is None:
+            return 1
+        model, effort = resolved
     else:
         _err("usage: ccd announce [<handle>] <model> <effort> "
-             "[--exclusive] [--force]  ($CCD_HANDLE is the default handle)")
+             "[--exclusive] [--force]  ($CCD_HANDLE is the default handle; "
+             "$CCD_MAPPING supplies model and effort when set)")
         return 2
 
     if not handle:
@@ -225,7 +280,11 @@ def cmd_announce(argv: list) -> int:
         reply = rpc("announce", **args)
     except Unreachable:
         return _unreachable("announce")
-    return _ok_or_err(reply, f"announced {handle} ({model}/{effort})")
+    # "(model/effort)", or just "(model)" when the entry has no effort —
+    # a trailing slash reads as a value that failed to print rather than one
+    # that is genuinely absent.
+    shown = f"{model}/{effort}" if effort else model
+    return _ok_or_err(reply, f"announced {handle} ({shown})")
 
 
 def cmd_ret(argv: list) -> int:
