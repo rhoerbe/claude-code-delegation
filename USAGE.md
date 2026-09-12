@@ -56,8 +56,12 @@ ok (ccd-broker 1.0.0)
 
 **Pin `CCD_SOCKET` explicitly** if anything will call `ccd` from inside an agent
 session rather than a login shell. The default is
-`${XDG_RUNTIME_DIR:-/tmp}/ccd-$USER.sock`, and a tool-invoked subshell does not
-reliably inherit `XDG_RUNTIME_DIR` — when it is missing, `ccd` silently resolves
+`$XDG_RUNTIME_DIR/ccd-<account>.sock`, and a tool-invoked subshell does not
+reliably inherit `XDG_RUNTIME_DIR`. Since 1.5.1 the fallback resolves
+`/run/user/<uid>` instead of jumping straight to `/tmp`, so the common case now
+agrees with the broker by itself; pinning `CCD_SOCKET` is still worth doing where
+a wrapper can, because an explicit address cannot drift at all. Before that fix,
+a missing `XDG_RUNTIME_DIR` made `ccd` silently resolve
 to `/tmp` and **auto-starts a second broker there**. Nothing errors. A handle
 registered against one broker simply never sees messages sent to the other:
 

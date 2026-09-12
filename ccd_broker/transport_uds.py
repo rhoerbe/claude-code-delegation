@@ -2,7 +2,8 @@
 
 AF_UNIX SOCK_STREAM, line-delimited JSON, one logical request per connection,
 a thread per connection. The socket lives at `$CCD_SOCKET` (default
-`${XDG_RUNTIME_DIR:-/tmp}/ccd-$USER.sock`), is created mode 0600, and every
+`$XDG_RUNTIME_DIR`, else `/run/user/<uid>`, else `/tmp`, named for the uid's
+account -- see `default_socket_path`), is created mode 0600, and every
 connection's peer uid is checked with SO_PEERCRED — there is no auth token
 (PLAN §5.1: peer-uid + filesystem permissions are the v1 security model).
 
@@ -91,12 +92,38 @@ def _warn(msg: str) -> None:
 
 
 def default_socket_path() -> str:
-    """`$CCD_SOCKET`, else `${XDG_RUNTIME_DIR:-/tmp}/ccd-$USER.sock`."""
+    """`$CCD_SOCKET`, else `<runtime dir>/ccd-<account>.sock`.
+
+    The runtime directory is `$XDG_RUNTIME_DIR` when set, and otherwise
+    `/run/user/<uid>` when that exists, falling back to `/tmp` only when it
+    does not. Resolving the uid rather than trusting the variable matters
+    because the broker normally runs as a `systemd --user` service, which
+    always has `XDG_RUNTIME_DIR`, while a client may not: Claude Code's Bash
+    tool strips it, so a client that fell straight through to `/tmp` addressed
+    a socket the broker was not listening on and reported the broker as down
+    while it was running. Two paths that disagree are worse than either one,
+    because the failure reads as "no broker" rather than "wrong address".
+
+    The account name comes from the uid, not from `$USER`. `$USER` survives a
+    `sudo -u` that does not reset it, and a stale value would name a socket
+    belonging to a different account -- on a host where the same uid number
+    means a different person than it does on its neighbour, that is exactly
+    the mix-up this resolves. `$USER` is consulted only if the uid has no
+    passwd entry at all.
+    """
     explicit = os.environ.get("CCD_SOCKET")
     if explicit:
         return explicit
-    base = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
-    user = os.environ.get("USER") or pwd.getpwuid(os.getuid()).pw_name
+
+    base = os.environ.get("XDG_RUNTIME_DIR")
+    if not base:
+        candidate = f"/run/user/{os.getuid()}"
+        base = candidate if os.path.isdir(candidate) else "/tmp"
+
+    try:
+        user = pwd.getpwuid(os.getuid()).pw_name
+    except KeyError:                              # uid with no passwd entry
+        user = os.environ.get("USER") or str(os.getuid())
     return os.path.join(base, f"ccd-{user}.sock")
 
 
