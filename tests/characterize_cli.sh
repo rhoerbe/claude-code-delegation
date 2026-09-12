@@ -10,7 +10,8 @@
 #   tests/characterize_cli.sh            # compare against them; non-zero on drift
 #
 # Volatile values (pids, temp paths, timestamps, uptimes, the repo path) are
-# normalised to <PID>, <TMP>, <TS>, <UP>, <REPO> so two runs of the same
+# normalised to <PID>, <TMP>, <TS>, <UP>, <REPO>, <VERSION> so two runs of the
+# same
 # implementation agree. Everything else is compared byte for byte.
 #
 # This file is deliberately NOT named tests/test_*.py: those are a parallel
@@ -88,6 +89,7 @@ normalise() {
       -e "s/pid [0-9][0-9]*/pid <PID>/g" \
       -e "s/\t[0-9][0-9]*\t/\t<PID>\t/g" \
       -e "s/up [0-9][0-9]*h\{0,1\}[0-9][0-9]*m/up <UP>/g" \
+      -e "s/ccd-broker [0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*/ccd-broker <VERSION>/g" \
       -e "s/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z/<TS>/g" \
       -e "s/^\([0-9][0-9]*\)$/<NUM>/g"
 }
@@ -325,4 +327,35 @@ if [ "$FAIL" -ne 0 ]; then
   echo "characterize_cli: $PASS passed, $FAIL FAILED — ${FAILED_CASES[*]}" >&2
   exit 1
 fi
+# The version is normalised above, so the recordings no longer freeze it — a
+# release bump used to turn this suite red until someone re-recorded ping-up,
+# which is churn that teaches people to re-record rather than to look. But
+# normalising a value means nothing checks it, and `ccd ping`'s whole job is to
+# report the version, so it is asserted here directly and against the SOURCE
+# rather than against a frozen copy of it: that is strictly stronger than the
+# recording was, because a wrong version now fails even if someone re-recorded
+# it to match.
+# Starts its own broker: the recorded cases above deliberately end with the
+# broker stopped, so a ping here would report "down" and the check would fail
+# for a reason that has nothing to do with the version.
+_tree_version="$(sed -n 's/^VERSION = "\(.*\)"$/\1/p' "$REPO_ROOT/ccd_broker/broker.py")"
+"$CCD" broker start >/dev/null 2>&1 || true
+_reported="$("$CCD" ping 2>&1 || true)"
+"$CCD" broker stop >/dev/null 2>&1 || true
+if [ -z "$_tree_version" ]; then
+  echo "  FAIL      ping-reports-tree-version (no VERSION in ccd_broker/broker.py)" >&2
+  FAIL=$((FAIL + 1)); FAILED_CASES+=("ping-reports-tree-version")
+elif printf '%s' "$_reported" | grep -q "ccd-broker $_tree_version"; then
+  echo "  ok        ping-reports-tree-version ($_tree_version)"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL      ping-reports-tree-version: tree says $_tree_version, ccd ping said: $_reported" >&2
+  FAIL=$((FAIL + 1)); FAILED_CASES+=("ping-reports-tree-version")
+fi
+
+if [ "$FAIL" -ne 0 ]; then
+  echo "characterize_cli: $PASS passed, $FAIL FAILED — ${FAILED_CASES[*]}" >&2
+  exit 1
+fi
+
 echo "characterize_cli: $PASS passed, 0 failed"
