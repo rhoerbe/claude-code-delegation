@@ -217,6 +217,7 @@ def cmd_announce(argv: list) -> int:
     # stated-twice-and-disagreeing failure this whole change exists to end,
     # just with the CLI as the second speaker.
     mapping = os.environ.get("CCD_MAPPING") or ""
+    from_mapping = False
     if len(positional) == 3:
         handle, model, effort = positional
     elif len(positional) == 2:
@@ -233,6 +234,7 @@ def cmd_announce(argv: list) -> int:
         if resolved is None:
             return 1
         model, effort = resolved
+        from_mapping = True
     else:
         _err("usage: ccd announce [<handle>] <model> <effort> "
              "[--exclusive] [--force]  ($CCD_HANDLE is the default handle; "
@@ -250,23 +252,26 @@ def cmd_announce(argv: list) -> int:
     # and empty anywhere else, in which case the broker keeps whatever it
     # already had.
     #
-    # `model` — the CLI's positional model-slot argument (fable/opus/sonnet/
-    # haiku) — is deliberately sent NOWHERE on the wire
-    # (claude-code-delegation#13, second pass): the broker's `slot` field it
-    # used to feed was dropped before release (a live probe showed naming a
-    # model directly reaches it exactly as well), and stuffing a slot name into
-    # the broker's `model` field instead would just reintroduce the same
-    # conflation this whole change exists to end — "sonnet" is not a resolved
-    # model id. The outward CLI surface stays frozen (ccd_smoke.sh depends on
-    # the 3-positional shape), so the positional stays and is still used in the
-    # status message below; it simply has no wire destination until phase 4
-    # gives `ccd launch` a manifest to resolve it through. $CLAUDE_PID is the
+    # `model` reaches the wire ONLY when a mapping resolved it. The positional
+    # never does (claude-code-delegation#13, second pass): it is free text a
+    # human typed, historically a model-slot name like "sonnet", and stuffing
+    # that into the broker's `model` field would reintroduce the conflation
+    # this whole change exists to end — "sonnet" is not a resolved model id.
+    # The comment this replaces said the positional had no wire destination
+    # "until phase 4 gives `ccd launch` a manifest to resolve it through";
+    # phase 4 shipped, so a mapping-resolved value now has exactly that
+    # destination, while the typed one still has none. The outward CLI surface
+    # stays frozen either way (ccd_smoke.sh depends on the 3-positional
+    # shape), and the positional is still what the status message prints.
+    # $CLAUDE_PID is the
     # announcing session's own top-level process id, set inside Claude Code and
     # empty anywhere else — the broker treats an empty pid as "no pid", exactly
     # like a plain shell participant, so it is never reaped for staleness.
     args = {
         "handle": handle,
         "effort": effort,
+        # Only a resolved id, never the typed positional — see above.
+        "model": model if from_mapping else "",
         "cwd": os.getcwd(),
         "session": os.environ.get("CLAUDE_CODE_SESSION_ID", ""),
         "pid": os.environ.get("CLAUDE_PID", ""),
