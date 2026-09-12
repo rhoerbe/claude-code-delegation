@@ -1,0 +1,5 @@
+argv: ccd announce typed-model low
+exit: 0
+--- stdout ---
+announced w-map4 (typed-model/low)
+--- stderr ---

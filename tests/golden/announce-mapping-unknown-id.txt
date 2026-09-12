@@ -1,0 +1,6 @@
+argv: ccd announce
+exit: 1
+--- stdout ---
+
+--- stderr ---
+ccd announce: no mapping 'no-such-id' in the manifest ($CCD_MAPPING); retire the stale value or pass the model and effort explicitly

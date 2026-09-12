@@ -1,0 +1,5 @@
+argv: ccd announce
+exit: 0
+--- stdout ---
+announced w-map2 (claude-haiku-4-5)
+--- stderr ---

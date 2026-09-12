@@ -1,0 +1,5 @@
+argv: ccd announce
+exit: 0
+--- stdout ---
+announced w-map (moonshotai/kimi-k3[1m]/max)
+--- stderr ---

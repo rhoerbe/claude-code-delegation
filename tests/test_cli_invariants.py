@@ -101,9 +101,15 @@ def test_cmd_ls_only_calls_roster(repo_root):
 # reintroduce exactly the conflation that change ended. The positional survives
 # because the CLI surface is frozen, not because it reaches the broker.
 
-@pytest.mark.parametrize("field", ["model", "slot"])
-def test_cmd_announce_sends_no_slot_shaped_field(repo_root, field):
-    assert field not in _wire_fields(_function(repo_root, "cmd_announce"))
+def test_cmd_announce_sends_no_slot_field(repo_root):
+    """`slot` was dropped from the schema before release and must stay gone."""
+    assert "slot" not in _wire_fields(_function(repo_root, "cmd_announce"))
+
+
+# `model` used to be asserted absent here too. It is now provenance-dependent
+# — a mapping-resolved id reaches the wire, a typed positional never does —
+# and this file reads the parse tree, which cannot see which value flowed.
+# tests/test_announce_mapping.py checks it by running the CLI instead.
 
 
 def test_cmd_announce_still_sends_what_the_broker_needs(repo_root):

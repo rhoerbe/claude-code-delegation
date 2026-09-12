@@ -33,7 +33,8 @@ USAGE = """usage: ccd <subcommand> [args]
 
   ccd send <to> <msg> [-f from]
   ccd recv [<handle>] [-t timeout]      ($CCD_HANDLE is the default handle)
-  ccd announce [<handle>] <model> <effort> [--exclusive] [--force]
+  ccd announce [[<handle>] <model> <effort>] [--exclusive] [--force]
+                                        ($CCD_MAPPING supplies model/effort)
   ccd ret [<handle>]
   ccd claim <worker> [<dispatcher>] [--force]
   ccd release <worker> [--force]
@@ -155,6 +156,43 @@ def cmd_recv(argv: list) -> int:
     return 1
 
 
+def _mapping_model_effort(ident: str):
+    """(model, effort) for a mapping id, or None after saying why.
+
+    Failing loudly is the point. The bug this replaces was a session
+    announcing two empty strings and landing on the roster with no effort at
+    all — silently, looking fine. Anything that goes wrong resolving a mapping
+    is louder than that by construction.
+
+    An entry with no effort (claude-haiku-4-5 is the real one: the client
+    never sends effort for it) yields "", which is what the roster already
+    stores for a handle that declared none — `effort` crosses the wire through
+    the broker's plain text coercion, where a missing key and an empty string
+    are the same value. So there is nothing to distinguish here and nothing
+    lost by sending "".
+    """
+    from ccd_mappings import manifest as m
+
+    try:
+        doc = m.load()
+    except FileNotFoundError as exc:
+        # load() raises for a missing or malformed file; validate() would have
+        # returned a list of problems instead. Only load() is used here.
+        _err(f"ccd announce: $CCD_MAPPING is {ident!r} but {exc}")
+        return None
+    except m.ManifestError as exc:
+        _err(f"ccd announce: $CCD_MAPPING is {ident!r} but {exc}")
+        return None
+
+    entry = m.find(doc, ident)
+    if entry is None:
+        _err(f"ccd announce: no mapping {ident!r} in the manifest "
+             f"($CCD_MAPPING); retire the stale value or pass the model and "
+             f"effort explicitly")
+        return None
+    return entry.get("model") or "", entry.get("effort") or ""
+
+
 def cmd_announce(argv: list) -> int:
     exclusive = False
     force = False
@@ -174,14 +212,33 @@ def cmd_announce(argv: list) -> int:
         else:
             positional.append(arg)
 
+    # Explicit positionals always win: an operator typing values means them,
+    # and a mapping resolved behind their back would be the same
+    # stated-twice-and-disagreeing failure this whole change exists to end,
+    # just with the CLI as the second speaker.
+    mapping = os.environ.get("CCD_MAPPING") or ""
+    from_mapping = False
     if len(positional) == 3:
         handle, model, effort = positional
     elif len(positional) == 2:
         handle = _env_handle()
         model, effort = positional
+    elif mapping and len(positional) <= 1:
+        # `ccd launch` put the whole launch decision in one variable, so a
+        # session started that way already carries everything an announce
+        # needs. Restating it on the command line would put the fact in two
+        # places again — one layer down from the bug this replaced, but the
+        # same bug (#10).
+        handle = positional[0] if positional else _env_handle()
+        resolved = _mapping_model_effort(mapping)
+        if resolved is None:
+            return 1
+        model, effort = resolved
+        from_mapping = True
     else:
         _err("usage: ccd announce [<handle>] <model> <effort> "
-             "[--exclusive] [--force]  ($CCD_HANDLE is the default handle)")
+             "[--exclusive] [--force]  ($CCD_HANDLE is the default handle; "
+             "$CCD_MAPPING supplies model and effort when set)")
         return 2
 
     if not handle:
@@ -195,23 +252,26 @@ def cmd_announce(argv: list) -> int:
     # and empty anywhere else, in which case the broker keeps whatever it
     # already had.
     #
-    # `model` — the CLI's positional model-slot argument (fable/opus/sonnet/
-    # haiku) — is deliberately sent NOWHERE on the wire
-    # (claude-code-delegation#13, second pass): the broker's `slot` field it
-    # used to feed was dropped before release (a live probe showed naming a
-    # model directly reaches it exactly as well), and stuffing a slot name into
-    # the broker's `model` field instead would just reintroduce the same
-    # conflation this whole change exists to end — "sonnet" is not a resolved
-    # model id. The outward CLI surface stays frozen (ccd_smoke.sh depends on
-    # the 3-positional shape), so the positional stays and is still used in the
-    # status message below; it simply has no wire destination until phase 4
-    # gives `ccd launch` a manifest to resolve it through. $CLAUDE_PID is the
+    # `model` reaches the wire ONLY when a mapping resolved it. The positional
+    # never does (claude-code-delegation#13, second pass): it is free text a
+    # human typed, historically a model-slot name like "sonnet", and stuffing
+    # that into the broker's `model` field would reintroduce the conflation
+    # this whole change exists to end — "sonnet" is not a resolved model id.
+    # The comment this replaces said the positional had no wire destination
+    # "until phase 4 gives `ccd launch` a manifest to resolve it through";
+    # phase 4 shipped, so a mapping-resolved value now has exactly that
+    # destination, while the typed one still has none. The outward CLI surface
+    # stays frozen either way (ccd_smoke.sh depends on the 3-positional
+    # shape), and the positional is still what the status message prints.
+    # $CLAUDE_PID is the
     # announcing session's own top-level process id, set inside Claude Code and
     # empty anywhere else — the broker treats an empty pid as "no pid", exactly
     # like a plain shell participant, so it is never reaped for staleness.
     args = {
         "handle": handle,
         "effort": effort,
+        # Only a resolved id, never the typed positional — see above.
+        "model": model if from_mapping else "",
         "cwd": os.getcwd(),
         "session": os.environ.get("CLAUDE_CODE_SESSION_ID", ""),
         "pid": os.environ.get("CLAUDE_PID", ""),
@@ -225,7 +285,11 @@ def cmd_announce(argv: list) -> int:
         reply = rpc("announce", **args)
     except Unreachable:
         return _unreachable("announce")
-    return _ok_or_err(reply, f"announced {handle} ({model}/{effort})")
+    # "(model/effort)", or just "(model)" when the entry has no effort —
+    # a trailing slash reads as a value that failed to print rather than one
+    # that is genuinely absent.
+    shown = f"{model}/{effort}" if effort else model
+    return _ok_or_err(reply, f"announced {handle} ({shown})")
 
 
 def cmd_ret(argv: list) -> int:

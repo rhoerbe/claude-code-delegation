@@ -1,0 +1,9 @@
+argv: ccd ls
+exit: 0
+--- stdout ---
+disp	high	-	-	<PID>	up	
+w-map	max	-	moonshotai/kimi-k3[1m]	<PID>	up	
+w-map2	-	-	claude-haiku-4-5	<PID>	up	
+w-map3	medium	-	claude-sonnet-5	<PID>	up	
+w-map4	low	-	-	<PID>	up	
+--- stderr ---

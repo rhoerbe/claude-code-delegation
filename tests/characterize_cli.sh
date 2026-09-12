@@ -251,6 +251,7 @@ record_case identity-nopid-force CLAUDE_PID= -- announce w-id2 a-model high --fo
 record_case identity-ret -- ret w-id
 record_case identity-ret2 -- ret w-id2
 
+
 # Launch against a real manifest (hosting#131 phase 4 follow-up: the billing
 # suffix, ADR-0002 revised e782da4). Placed after the roster is empty and on
 # their own handles, same reason as the identity cases above — these use
@@ -275,6 +276,42 @@ record_case launch-ret-billed -- ret "119-3-kimi-k3-1m-max-api"
 record_case launch-ret-unbilled -- ret "119-3-claude-sonnet-5-medium"
 record_case launch-ret-explicit -- ret exact-name
 record_case launch-ls-clean -- ls
+
+# `ccd announce` resolving model and effort from $CCD_MAPPING. The bug behind
+# these: `ccd launch` removes CCD_MODEL/CCD_EFFORT from the environment it
+# hands on, while the worker skill still announced with them — so a launched
+# session announced two empty strings and landed on the roster with no effort
+# at all. Same convention as the launch cases above: only these pass
+# CCD_MAPPINGS, since the harness default deliberately points at no manifest.
+echo "=== announce from a mapping ==="
+record_case announce-from-mapping \
+  CCD_MAPPINGS="$SAMPLE_MANIFEST" CCD_HANDLE=w-map CCD_MAPPING=kimi-k3-1m-max \
+  -- announce
+# An entry with no effort announces without one, and the confirmation drops
+# the trailing slash rather than printing "(name/)".
+record_case announce-from-mapping-no-effort \
+  CCD_MAPPINGS="$SAMPLE_MANIFEST" CCD_HANDLE=w-map2 CCD_MAPPING=claude-haiku-4-5 \
+  -- announce
+# A handle positional is still allowed; the rest comes from the mapping.
+record_case announce-mapping-handle-only \
+  CCD_MAPPINGS="$SAMPLE_MANIFEST" CCD_MAPPING=claude-sonnet-5-medium \
+  -- announce w-map3
+# Typed values win: an operator who types them means them.
+record_case announce-mapping-positionals-win \
+  CCD_MAPPINGS="$SAMPLE_MANIFEST" CCD_HANDLE=w-map4 CCD_MAPPING=kimi-k3-1m-max \
+  -- announce typed-model low
+# Failing loudly beats announcing empty strings, which was the bug.
+record_case announce-mapping-unknown-id \
+  CCD_MAPPINGS="$SAMPLE_MANIFEST" CCD_HANDLE=w-map5 CCD_MAPPING=no-such-id \
+  -- announce
+# $CCD_MAPPING set but no manifest to resolve it against.
+record_case announce-mapping-no-manifest \
+  CCD_HANDLE=w-map6 CCD_MAPPING=kimi-k3-1m-max -- announce
+record_case announce-mapping-ls -- ls
+record_case announce-mapping-ret -- ret w-map
+record_case announce-mapping-ret2 -- ret w-map2
+record_case announce-mapping-ret3 -- ret w-map3
+record_case announce-mapping-ret4 -- ret w-map4
 
 record_case broker-stop -- broker stop
 record_case broker-stop-again -- broker stop
