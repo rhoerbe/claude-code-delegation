@@ -28,6 +28,18 @@ exit: 0
       "drift": ""
     },
     {
+      "handle": "42-claude-sonnet-5-medium",
+      "effort": "medium",
+      "model": "claude-sonnet-5",
+      "pid": <PID>,
+      "mapping": "claude-sonnet-5-medium",
+      "owner": null,
+      "cwd": "<REPO>",
+      "session": null,
+      "alive": true,
+      "drift": ""
+    },
+    {
       "handle": "disp",
       "effort": "high",
       "model": null,
@@ -41,6 +53,18 @@ exit: 0
     },
     {
       "handle": "exact-name",
+      "effort": "max",
+      "model": "moonshotai/kimi-k3[1m]",
+      "pid": <PID>,
+      "mapping": "kimi-k3-1m-max",
+      "owner": null,
+      "cwd": "<REPO>",
+      "session": null,
+      "alive": true,
+      "drift": ""
+    },
+    {
+      "handle": "kimi-k3-1m-max-api",
       "effort": "max",
       "model": "moonshotai/kimi-k3[1m]",
       "pid": <PID>,
