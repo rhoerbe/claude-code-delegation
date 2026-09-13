@@ -85,29 +85,51 @@ def test_the_listing_goes_to_stdout_not_stderr(piped):
 
 
 def test_a_real_terminal_gives_the_same_answer(tmp_path, repo_root):
-    """--list is non-interactive by nature, not by accident of redirection."""
+    """--list is non-interactive by nature, not by accident of redirection.
+
+    A real tty is handed to the child as stdin via `openpty` rather than
+    `pty.fork`: forking a multi-threaded pytest process warns about deadlocks
+    in the child, and the fork buys nothing here — only stdin needs to be a
+    terminal.
+    """
     manifest = tmp_path / "mappings.json"
     manifest.write_text(json.dumps(MANIFEST), encoding="utf-8")
     env = dict(os.environ)
     env["CCD_MAPPINGS"] = str(manifest)
 
-    pid, fd = pty.fork()
-    if pid == 0:  # pragma: no cover - child execs away
-        os.execvpe(str(repo_root / "ccd"),
-                   [str(repo_root / "ccd"), "pick", "--list"], env)
-    chunks = []
+    controller, terminal = pty.openpty()
     try:
-        while True:
-            data = os.read(fd, 1024)
-            if not data:
-                break
-            chunks.append(data)
-    except OSError:
-        pass
-    _, status = os.waitpid(pid, 0)
-    assert os.waitstatus_to_exitcode(status) == 0
-    seen = b"".join(chunks).decode().replace("\r\n", "\n")
-    assert rows(seen) == EXPECTED
+        out = subprocess.run([str(repo_root / "ccd"), "pick", "--list"],
+                             stdin=terminal, capture_output=True, text=True,
+                             env=env)
+    finally:
+        os.close(controller)
+        os.close(terminal)
+    assert out.returncode == 0, out.stderr
+    assert rows(out.stdout) == EXPECTED
+
+
+def test_the_terminal_fixture_really_is_a_terminal(tmp_path, repo_root):
+    """Otherwise the test above would pass for the wrong reason.
+
+    `ccd pick` without --list refuses exactly when stdin is not a terminal, so
+    it answering the prompt instead of refusing is proof the tty is real.
+    """
+    manifest = tmp_path / "mappings.json"
+    manifest.write_text(json.dumps(MANIFEST), encoding="utf-8")
+    env = dict(os.environ)
+    env["CCD_MAPPINGS"] = str(manifest)
+
+    controller, terminal = pty.openpty()
+    try:
+        os.write(controller, b"2\n")
+        out = subprocess.run([str(repo_root / "ccd"), "pick"], stdin=terminal,
+                             capture_output=True, text=True, env=env, timeout=30)
+    finally:
+        os.close(controller)
+        os.close(terminal)
+    assert "not a terminal" not in out.stderr
+    assert out.stdout.strip() == "claude-haiku-4-5", out.stdout
 
 
 # ----------------------------------------------------------------------

@@ -482,6 +482,7 @@ ccd release <worker> [--force]
 ccd ls
 ccd dashboard [--scope <handle>] [--json] [--write <path>] [--rates <file>]
 ccd pick                              (interactive; prints the chosen id)
+ccd pick --list                       (non-interactive; id<TAB>label per line)
 ccd launch [<mapping-id>] [--issue N] [--phase N] [--handle NAME] [-- args]
 ccd ping
 ccd broker start|stop|status
@@ -510,6 +511,12 @@ the listing and prompt on stderr, the id alone on stdout, so `id=$(ccd pick)`
 captures exactly the id. It is **interactive only** and refuses when its input
 is not a terminal, so there is no `ccd pick | ccd launch` pipeline; script with
 `ccd launch <id>`, which needs no picking.
+
+`ccd pick --list` is the non-interactive half: `id<TAB>label` per line on
+stdout, no prompt, no terminal needed. The id comes first because the id is
+what `ccd launch` takes. This is how a dispatcher session discovers what
+mappings exist, since it cannot run the interactive picker from a tool call
+(issue #27).
 
 `ccd launch` resolves a mapping, derives a handle from it, reserves that handle
 with `announce --exclusive`, pins `CCD_SOCKET`, and execs the launcher the
