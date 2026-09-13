@@ -1,4 +1,4 @@
-argv: ccd pick extra-argument
+argv: ccd pick --wat
 exit: 2
 --- stdout ---
 

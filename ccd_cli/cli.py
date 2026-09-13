@@ -40,7 +40,8 @@ USAGE = """usage: ccd <subcommand> [args]
   ccd release <worker> [--force]
   ccd ls
   ccd dashboard [--scope <handle>] [--json] [--write <path>] [--rates <file>]
-  ccd pick
+  ccd pick                              (interactive; prints the chosen id)
+  ccd pick --list                       (non-interactive; id<TAB>label per line)
   ccd launch [<mapping-id>] [--issue N] [--phase N] [--handle NAME] [-- args]
   ccd ping
   ccd broker start|stop|status
@@ -514,6 +515,17 @@ def _list_mappings(doc) -> list:
     return list(zip(m.ids(doc), m.labels(doc)))
 
 
+def _refuse_no_terminal(command: str) -> None:
+    """The one message for the one condition, so both callers say the same.
+
+    Both callers refuse before printing anything. A listing emitted on the way
+    to a refusal is the output the caller is being told it may not have.
+    """
+    _err(f"ccd {command}: stdin is not a terminal; picking is interactive "
+         f"only — pass the mapping id directly instead, or use "
+         f"`ccd pick --list`")
+
+
 def _prompt_choice(command: str, count: int):
     """Read a 1-based choice from stdin, or print why and return None.
 
@@ -530,8 +542,7 @@ def _prompt_choice(command: str, count: int):
     nothing of the UI around it.
     """
     if not sys.stdin.isatty():
-        _err(f"ccd {command}: stdin is not a terminal; pick is interactive "
-             f"only — pass the mapping id directly instead")
+        _refuse_no_terminal(command)
         return None
     sys.stderr.write(f"choice [1-{count}]: ")
     sys.stderr.flush()
@@ -584,9 +595,13 @@ def _broker_version_note(broker_version: str, cli_version: str):
 
 
 def cmd_pick(argv: list) -> int:
-    if argv:
-        _err("usage: ccd pick")
-        return 2
+    listing = False
+    for arg in argv:
+        if arg == "--list":
+            listing = True
+        else:
+            _err("usage: ccd pick [--list]")
+            return 2
 
     doc = _load_manifest_or_die("pick")
     if doc is None:
@@ -596,6 +611,35 @@ def cmd_pick(argv: list) -> int:
     if not items:
         _err("ccd pick: the manifest has no mappings")
         return 1
+
+    if listing:
+        # Tab-separated `id<TAB>label` on stdout, id first, no numbering and no
+        # header — the same shape `ccd ls` uses, for the same reason: every
+        # non-blank line is one record, so nothing has to be skipped before
+        # parsing starts.
+        #
+        # The id leads because the id is what `ccd launch` takes. The reader
+        # here is a language model, and the failure to design against is it
+        # passing the *label* — `kimi-k3/max` reads like a name, and the
+        # interactive picker shows nothing else. Putting the id first, on its
+        # own, in the column a reader reaches for, is what makes that mistake
+        # hard rather than natural.
+        #
+        # No numbering: an ordinal is for a human choosing one of them, and
+        # printing it here would invite a model to send "3" to `ccd launch`.
+        for ident, label in items:
+            print(f"{ident}\t{label}")
+        return 0
+
+    # Interactive from here. The terminal check comes BEFORE the listing: a
+    # piped `ccd pick` used to print every option and then refuse, so the
+    # refusal path emitted exactly the output it was refusing to be used for.
+    # Harmless while there was no other way to get it; actively misleading now
+    # that there is, since a caller that reached for the wrong command would
+    # get a usable listing anyway and never learn it asked wrongly.
+    if not sys.stdin.isatty():
+        _refuse_no_terminal("pick")
+        return 2
 
     for i, (_ident, label) in enumerate(items, start=1):
         sys.stderr.write(f"{i}. {label}\n")
@@ -658,6 +702,12 @@ def cmd_launch(argv: list) -> int:
         if not items:
             _err("ccd launch: the manifest has no mappings")
             return 1
+        # Same order as `ccd pick`: refuse before listing, not after. Printing
+        # the options and then declining to accept a choice hands a piped
+        # caller the output it was refused the use of.
+        if not sys.stdin.isatty():
+            _refuse_no_terminal("launch")
+            return 2
         for i, (_id, label) in enumerate(items, start=1):
             sys.stderr.write(f"{i}. {label}\n")
         choice = _prompt_choice("launch", len(items))

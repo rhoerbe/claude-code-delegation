@@ -32,7 +32,9 @@ each one differs, though:
   launch`, `ccd ls`, `ccd dashboard`, and Esc-interrupt steering. These are
   setup, starting sessions, and observability — things done from outside the
   agent sessions. `ccd pick` additionally needs a real terminal (see
-  [`ccd pick` is interactive, deliberately](#ccd-pick-is-interactive-deliberately)). `ccd claim`/`ccd release` work
+  [`ccd pick` without `--list` is interactive,
+  deliberately](#ccd-pick-without---list-is-interactive-deliberately)).
+  `ccd claim`/`ccd release` work
   from a shell too, but belong in the dispatcher's own window (see [Assigning
   workers to the dispatcher](#assigning-workers-to-the-dispatcher)), since
   they name a dispatcher and it is the obvious one.
@@ -207,24 +209,44 @@ A real one comes from whatever provisions your hosts. README's
 [mapping manifest](README.md#the-mapping-manifest) section has the full
 format.
 
-### `ccd pick` is interactive, deliberately
+### Listing the mappings without choosing one
 
-`ccd pick` refuses when its input is not a terminal:
+`ccd pick --list` prints the manifest and returns, with no prompt and no
+terminal required:
+
+```console
+$ ccd pick --list
+claude-sonnet-5-medium	claude-sonnet-5/medium
+claude-opus-5-high	claude-opus-5/high
+kimi-k3-max	kimi-k3/max
+glm-5.3-high	glm-5.3/high
+```
+
+One line per mapping, `id<TAB>label`, on stdout. **The first column is the id,
+and the id is what `ccd launch` takes** — the label is for reading. There is
+no header and no numbering, the same shape `ccd ls` uses, so every non-blank
+line is one record.
+
+This is what a dispatcher session uses: it cannot run the interactive picker
+(below), so without a listing it would have to ask you what exists or already
+know an id.
+
+### `ccd pick` without `--list` is interactive, deliberately
+
+Bare `ccd pick` is for a human at a keyboard, and refuses when its input is
+not a terminal:
 
 ```console
 $ ccd pick < /dev/null
-1. claude-sonnet-5/medium
-2. claude-opus-5/high
-3. kimi-k3/max
-4. glm-5.3/high
-ccd pick: stdin is not a terminal; pick is interactive only — pass the mapping id directly instead
+ccd pick: stdin is not a terminal; picking is interactive only — pass the mapping id directly instead, or use `ccd pick --list`
 ```
 
-This is a choice, not a gap. A picker that might block invisibly inside a
+That is a choice, not a gap. A picker that might block invisibly inside a
 script, a cron job or a CI run is worse than one that always refuses there.
 **So there is no `ccd pick | ccd launch` pipeline** — for anything scripted,
-name the mapping directly with `ccd launch <id>`, which needs no picking at
-all.
+list the mappings and name one with `ccd launch <id>`, which needs no picking
+at all. `ccd launch` with no id picks too, and refuses the same way for the
+same reason.
 
 Interactively, the listing and the prompt go to stderr and only the chosen id
 to stdout, so capturing the choice works:

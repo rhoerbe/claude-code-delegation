@@ -200,3 +200,19 @@ def test_both_describe_the_esc_requeue_the_same_way(repo_root, name):
 @pytest.mark.parametrize("name", SKILLS)
 def test_neither_reaches_around_the_cli(repo_root, name):
     assert "never touch `$CCD_SOCKET` directly" in flat(skill(repo_root, name))
+
+
+def test_the_dispatcher_is_told_how_to_list_mappings_itself(repo_root):
+    """It cannot run the interactive picker from a tool call (#27).
+
+    Telling it to ask the human instead was the honest answer only while
+    `ccd pick --list` did not exist.
+    """
+    text = skill(repo_root, "ccd-dispatcher")
+    assert "ccd pick --list" in text
+    assert "id is the first column" in flat(text)
+
+
+def test_the_dispatcher_is_warned_off_passing_the_label(repo_root):
+    """`kimi-k3/max` reads like a name; `ccd launch` takes `kimi-k3-max`."""
+    assert "The label is for reading" in flat(skill(repo_root, "ccd-dispatcher"))

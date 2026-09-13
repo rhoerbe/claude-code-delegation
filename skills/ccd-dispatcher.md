@@ -74,11 +74,21 @@ derives and reserves a handle, and starts the session:
 ccd launch <mapping-id> --issue <N> --phase <M> -- "/ccd-worker"
 ```
 
-`ccd pick` lists the available mappings and returns the id of the one chosen,
-but it is **interactive only** — it needs a real terminal and refuses
-otherwise, so you cannot drive it from a tool call. When you need to know what
-mappings exist, either ask the human to run `ccd pick`, or name the mapping id
-directly if you already know it.
+To see what mappings exist, list them:
+
+```
+ccd pick --list
+```
+
+One per line, `id<TAB>label` — for example
+`kimi-k3-max<TAB>kimi-k3/max`. **The id is the first column, and the id is
+what `ccd launch` takes.** The label is for reading; passing it to `ccd
+launch` will not work.
+
+Bare `ccd pick` is the interactive picker for a human at a keyboard. It needs
+a real terminal and refuses otherwise, so you cannot run it from a tool call —
+use `--list` and choose an id yourself, or ask the human to run `ccd pick` if
+the choice is theirs to make.
 
 The trailing `-- "/ccd-worker"` is what makes the new session load the worker
 skill and announce itself. Without it the session starts but never appears on

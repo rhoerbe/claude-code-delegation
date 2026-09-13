@@ -1,0 +1,7 @@
+argv: ccd pick --list
+exit: 0
+--- stdout ---
+claude-sonnet-5-medium	claude-sonnet-5/medium
+claude-haiku-4-5	claude-haiku-4-5
+kimi-k3-1m-max	kimi-k3[1m]/max
+--- stderr ---
