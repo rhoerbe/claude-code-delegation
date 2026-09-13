@@ -40,7 +40,8 @@ USAGE = """usage: ccd <subcommand> [args]
   ccd release <worker> [--force]
   ccd ls
   ccd dashboard [--scope <handle>] [--json] [--write <path>] [--rates <file>]
-  ccd pick
+  ccd pick                              (interactive; prints the chosen id)
+  ccd pick --list                       (non-interactive; id<TAB>label per line)
   ccd launch [<mapping-id>] [--issue N] [--phase N] [--handle NAME] [-- args]
   ccd ping
   ccd broker start|stop|status
@@ -517,9 +518,8 @@ def _list_mappings(doc) -> list:
 def _refuse_no_terminal(command: str) -> None:
     """The one message for the one condition, so both callers say the same.
 
-    `ccd pick` refuses this before printing anything; `ccd launch` with no id
-    reaches it after its listing, because there the listing is part of asking
-    the human a question rather than the answer to one.
+    Both callers refuse before printing anything. A listing emitted on the way
+    to a refusal is the output the caller is being told it may not have.
     """
     _err(f"ccd {command}: stdin is not a terminal; picking is interactive "
          f"only — pass the mapping id directly instead, or use "
@@ -702,6 +702,12 @@ def cmd_launch(argv: list) -> int:
         if not items:
             _err("ccd launch: the manifest has no mappings")
             return 1
+        # Same order as `ccd pick`: refuse before listing, not after. Printing
+        # the options and then declining to accept a choice hands a piped
+        # caller the output it was refused the use of.
+        if not sys.stdin.isatty():
+            _refuse_no_terminal("launch")
+            return 2
         for i, (_id, label) in enumerate(items, start=1):
             sys.stderr.write(f"{i}. {label}\n")
         choice = _prompt_choice("launch", len(items))

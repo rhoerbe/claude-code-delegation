@@ -180,7 +180,9 @@ record_case dashboard-unreachable -- dashboard
 # path plus the successful-choice path are unit-tested directly against a
 # faked stdin in tests/test_pick_launch.py instead.
 record_case pick-usage -- pick extra-argument
+record_case pick-unknown-flag -- pick --wat
 record_case pick-no-manifest -- pick
+record_case pick-list-no-manifest -- pick --list
 record_case launch-no-manifest -- launch
 record_case launch-unknown-arg -- launch --wat
 record_case launch-issue-no-value -- launch some-id --issue
@@ -261,6 +263,10 @@ record_case identity-ret2 -- ret w-id2
 # cases ever see a manifest or a launcher.
 echo "=== launch (real manifest, stub launcher) ==="
 record_case pick-real-manifest CCD_MAPPINGS="$SAMPLE_MANIFEST" -- pick
+# The listing a dispatcher reads: id first so the value `ccd launch` takes is
+# the one a reader reaches for. Every case here runs with stdin redirected,
+# which is the point — the interactive form refuses in exactly that state.
+record_case pick-list CCD_MAPPINGS="$SAMPLE_MANIFEST" -- pick --list
 record_case launch-with-billing \
   CCD_MAPPINGS="$SAMPLE_MANIFEST" PATH="$STUB_PATH" \
   -- launch kimi-k3-1m-max --issue 119 --phase 3
@@ -273,6 +279,11 @@ record_case launch-explicit-handle-ignores-billing \
 record_case launch-unknown-mapping \
   CCD_MAPPINGS="$SAMPLE_MANIFEST" \
   -- launch not-a-real-id --issue 1 --phase 1
+# `launch` with no id picks first, so it refuses a pipe for the same reason
+# `pick` does — and must say so in the same words.
+record_case launch-no-id-refuses \
+  CCD_MAPPINGS="$SAMPLE_MANIFEST" \
+  -- launch
 record_case launch-ls-after CCD_MAPPINGS="$SAMPLE_MANIFEST" -- ls
 record_case launch-ret-billed -- ret "119-3-kimi-k3-1m-max-api"
 record_case launch-ret-unbilled -- ret "119-3-claude-sonnet-5-medium"

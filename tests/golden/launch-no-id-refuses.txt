@@ -1,0 +1,6 @@
+argv: ccd launch
+exit: 2
+--- stdout ---
+
+--- stderr ---
+ccd launch: stdin is not a terminal; picking is interactive only — pass the mapping id directly instead, or use `ccd pick --list`
