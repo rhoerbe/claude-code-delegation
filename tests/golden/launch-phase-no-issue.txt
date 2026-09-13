@@ -1,0 +1,6 @@
+argv: ccd launch some-id --phase 3
+exit: 2
+--- stdout ---
+
+--- stderr ---
+ccd launch: --phase given without --issue; a phase subdivides an issue and needs one to subdivide

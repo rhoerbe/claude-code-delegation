@@ -193,8 +193,17 @@ def test_prompt_field_accepts_free_text(cli_module, monkeypatch):
     assert cli_module._prompt_field("launch", "issue", "--issue") == "42"
 
 
-def test_prompt_field_rejects_empty_input(cli_module, monkeypatch):
+def test_prompt_field_blank_line_means_omit(cli_module, monkeypatch):
+    # hosting ADR-0002 (revised 2026-09-12): a bare Enter is a deliberate
+    # "omit this field" answer, not a retry — it comes back as "", not None.
     monkeypatch.setattr(sys, "stdin", FakeStdin(["   \n"], isatty=True))
+    assert cli_module._prompt_field("launch", "issue", "--issue") == ""
+
+
+def test_prompt_field_rejects_eof(cli_module, monkeypatch):
+    # Real EOF (no line at all) is still an error — there was nothing to
+    # have chosen "blank" with.
+    monkeypatch.setattr(sys, "stdin", FakeStdin([], isatty=True))
     assert cli_module._prompt_field("launch", "issue", "--issue") is None
 
 
@@ -351,10 +360,114 @@ def test_launch_unknown_mapping_id_is_a_usage_error(with_broker):
     assert run_ccd(with_broker, "ls").stdout.strip() == "(no workers announced)"
 
 
-def test_launch_missing_issue_and_phase_refuses_without_a_tty(with_broker):
+def test_launch_on_a_real_tty_a_blank_issue_answer_omits_both_fields(with_broker):
+    # hosting ADR-0002 (revised 2026-09-12): interactively (a real terminal,
+    # no --issue/--phase given) `ccd launch` still asks — but a bare Enter on
+    # the issue prompt now means "omit it", not "ask again", and since a
+    # phase needs an issue to subdivide, a blank issue skips the phase
+    # prompt entirely rather than asking for a phase it could never use.
+    import pty
+
+    ccd = str(Path(__file__).resolve().parent.parent / "ccd")
+    controller, terminal = pty.openpty()
+    try:
+        os.write(controller, b"\n")  # blank answer to the "issue" prompt
+        out = subprocess.run([sys.executable, ccd, "launch", ID_SONNET],
+                             stdin=terminal, capture_output=True, text=True,
+                             env=with_broker, timeout=15)
+    finally:
+        os.close(controller)
+        os.close(terminal)
+    assert out.returncode == 0, repr(out.stdout + out.stderr)
+    assert "phase" not in out.stderr  # never prompted for it
+    data = json.loads(out.stdout)
+    assert data["CCD_HANDLE"] == ID_SONNET
+
+
+def test_launch_on_a_real_tty_an_issue_then_blank_phase_omits_only_phase(with_broker):
+    import pty
+
+    ccd = str(Path(__file__).resolve().parent.parent / "ccd")
+    controller, terminal = pty.openpty()
+    try:
+        os.write(controller, b"42\n\n")  # issue "42", then a blank phase
+        out = subprocess.run([sys.executable, ccd, "launch", ID_SONNET],
+                             stdin=terminal, capture_output=True, text=True,
+                             env=with_broker, timeout=15)
+    finally:
+        os.close(controller)
+        os.close(terminal)
+    assert out.returncode == 0, repr(out.stdout + out.stderr)
+    data = json.loads(out.stdout)
+    assert data["CCD_HANDLE"] == f"42-{ID_SONNET}"
+
+
+def test_launch_missing_issue_and_phase_omits_both_without_a_tty(with_broker):
+    # hosting ADR-0002 (revised 2026-09-12): issue/phase are independently
+    # optional now — a non-interactive launch with neither flag no longer
+    # refuses, it just derives the bare <mapping-id>[-<billing>] shape.
     out = run_ccd(with_broker, "launch", ID_SONNET, input_text="")
+    assert out.returncode == 0, repr(out.stdout + out.stderr)
+    data = json.loads(out.stdout)
+    assert data["CCD_HANDLE"] == ID_SONNET
+    assert data["args"][:2] == ["--name", ID_SONNET]
+
+
+def test_launch_issue_without_phase_omits_without_a_tty(with_broker):
+    # <issue>-<mapping-id>[-<billing>]: the middle of the six shapes.
+    out = run_ccd(with_broker, "launch", ID_SONNET, "--issue", "42", input_text="")
+    assert out.returncode == 0, repr(out.stdout + out.stderr)
+    data = json.loads(out.stdout)
+    assert data["CCD_HANDLE"] == f"42-{ID_SONNET}"
+
+
+def test_launch_bare_mapping_id_gets_the_billing_suffix(with_broker):
+    # <mapping-id>-<billing>, with no issue or phase at all.
+    out = run_ccd(with_broker, "launch", ID_KIMI, input_text="")
+    assert out.returncode == 0, repr(out.stdout + out.stderr)
+    data = json.loads(out.stdout)
+    assert data["CCD_HANDLE"] == f"{ID_KIMI}-api"
+
+
+def test_launch_phase_without_issue_is_an_immediate_usage_error(with_broker):
+    # hosting ADR-0002's one hard rule: a phase subdivides an issue, so
+    # `--phase` with no `--issue` is a usage error (exit 2), never a prompt
+    # for the missing issue — even with a perfectly valid mapping id and a
+    # live broker, so the failure can only be this rule and not, say, the
+    # unrelated non-tty refusal or an unresolved mapping id.
+    out = run_ccd(with_broker, "launch", ID_SONNET, "--phase", "3", input_text="")
     assert out.returncode == 2
-    assert "stdin is not a terminal" in out.stderr
+    assert "--phase" in out.stderr and "--issue" in out.stderr
+    assert "not a terminal" not in out.stderr
+    assert run_ccd(with_broker, "ls").stdout.strip() == "(no workers announced)"
+
+
+def test_launch_phase_without_issue_is_rejected_before_the_manifest_loads(tmp_path, repo_root):
+    # The rule fires before the manifest is even read — confirmed by pointing
+    # CCD_MAPPINGS at a file that does not exist and getting the usage error,
+    # not the "no mapping manifest" message.
+    env = dict(os.environ)
+    env["CCD_MAPPINGS"] = str(tmp_path / "does-not-exist.json")
+    env["PYTHONPATH"] = str(repo_root)
+    out = run_ccd(env, "launch", "anything", "--phase", "3", input_text="")
+    assert out.returncode == 2
+    assert "--phase" in out.stderr and "--issue" in out.stderr
+    assert "no mapping manifest" not in out.stderr
+
+
+def test_launch_phase_without_issue_is_unconditional_not_a_tty_fallback(cli_module):
+    # The hard rule (`phase is not None and issue is None`) is checked with
+    # no `sys.stdin.isatty()` in the condition at all — confirmed directly
+    # against the source here, since a subprocess test can only ever supply
+    # a non-tty stdin and so could not otherwise distinguish "this rule
+    # fires unconditionally" from "this rule fires only because stdin
+    # happens to be a pipe in every test that exercises it".
+    import inspect
+
+    src = inspect.getsource(cli_module.cmd_launch)
+    rule = src.split("if phase is not None and issue is None:", 1)[1]
+    rule = rule.split("\n\n", 1)[0]
+    assert "isatty" not in rule
 
 
 # ----------------------------------------------------------------------

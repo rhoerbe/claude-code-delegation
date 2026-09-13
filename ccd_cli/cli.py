@@ -614,21 +614,24 @@ def _prompt_choice(command: str, count: int):
 def _prompt_field(command: str, label: str, flag: str):
     """Read one line of free text from stdin (issue/phase numbers), or print
     why and return None. Same stdin-must-be-a-terminal rule as
-    `_prompt_choice`, for the same reason."""
+    `_prompt_choice`, for the same reason.
+
+    A blank line (bare Enter) is a deliberate answer, not a retry: it means
+    "omit this field" (hosting ADR-0002, revised 2026-09-12) and comes back
+    as `""`, which callers treat exactly like the flag never being passed.
+    Only real EOF (Ctrl-D, or a pipe that closed) is still an error — there
+    is no line to have chosen "blank" with.
+    """
     if not sys.stdin.isatty():
         _err(f"ccd {command}: stdin is not a terminal; pass {flag} explicitly")
         return None
-    sys.stderr.write(f"{label}: ")
+    sys.stderr.write(f"{label} (blank to omit): ")
     sys.stderr.flush()
     raw = sys.stdin.readline()
     if raw == "":
         _err(f"ccd {command}: no {label} given")
         return None
-    raw = raw.strip()
-    if not raw:
-        _err(f"ccd {command}: no {label} given")
-        return None
-    return raw
+    return raw.strip()
 
 
 def _broker_version_note(broker_version: str, cli_version: str):
@@ -736,6 +739,19 @@ def cmd_launch(argv: list) -> int:
             _err(f"ccd launch: unexpected argument: {arg}")
             return 2
 
+    # hosting ADR-0002 (revised 2026-09-12, issue/phase optional): the one
+    # hard rule. A phase subdivides an issue, so `--phase` with no `--issue`
+    # names nothing — a usage error, immediately, never a prompt for the
+    # missing issue (prompting there would re-instate the old mandatory-issue
+    # behaviour one flag at a time). Checked here, before the manifest even
+    # loads and before `--handle` is considered, so this is the one thing
+    # that can make `ccd launch` fail before anything else about the
+    # invocation is examined.
+    if phase is not None and issue is None:
+        _err("ccd launch: --phase given without --issue; a phase subdivides "
+             "an issue and needs one to subdivide")
+        return 2
+
     from ccd_mappings import manifest as m
 
     doc = _load_manifest_or_die("launch")
@@ -770,24 +786,46 @@ def cmd_launch(argv: list) -> int:
     if handle_override:
         handle = handle_override
     else:
-        # hosting's ADR-0002 (revised e782da4, after this file's earlier
-        # <issue>-<phase>-<id> finding went to the user): the shape is
-        # <issue>-<phase>-<mapping-id>[-<billing>] — billing appended only
-        # when the picked entry has one, since it is optional in the
-        # manifest (ccd_mappings, hosting#131 phase 4 follow-up). slotname
-        # from the original ADR text still has no equivalent here and stays
-        # dropped, unchanged from before: there is no "slot" for a remapped
-        # entry like moonshotai/kimi-k3, and the derived mapping id already
-        # carries the model+effort identity slotname+effort used to.
-        if issue is None:
+        # hosting's ADR-0002 (revised 2026-09-12, issue/phase optional): six
+        # shapes, `issue` and `phase` each independently optional, `billing`
+        # appended only when the picked entry has one (optional in the
+        # manifest, ccd_mappings, hosting#131 phase 4 follow-up):
+        #   <issue>-<phase>-<mapping-id>[-<billing>]
+        #   <issue>-<mapping-id>[-<billing>]
+        #   <mapping-id>[-<billing>]
+        # slotname from the original ADR text still has no equivalent here
+        # and stays dropped: there is no "slot" for a remapped entry like
+        # moonshotai/kimi-k3, and the derived mapping id already carries the
+        # model+effort identity slotname+effort used to.
+        #
+        # Interactive prompting (stdin is a terminal, the flag was not
+        # given) is still offered — an operator typing `ccd launch` probably
+        # does have an issue in mind — but a blank answer now means "omit
+        # it", not "ask again" or "refuse" (`_prompt_field`'s own contract).
+        # Phase is only ever prompted for once an issue is in hand (from the
+        # flag or from the prompt): prompting for phase after a blank issue
+        # would hand-roll the exact "--phase with no --issue" shape the hard
+        # rule above forbids, one prompt at a time. A non-interactive
+        # invocation (no tty) that reaches here has already had `--phase`
+        # without `--issue` rejected above, so a missing `--issue` alone, or
+        # both missing, are simply omitted — no prompt, no refusal.
+        if issue is None and sys.stdin.isatty():
             issue = _prompt_field("launch", "issue", "--issue")
             if issue is None:
                 return 2
-        if phase is None:
+        issue = issue or ""
+        if issue and phase is None and sys.stdin.isatty():
             phase = _prompt_field("launch", "phase", "--phase")
             if phase is None:
                 return 2
-        handle = f"{issue}-{phase}-{ident}"
+        phase = phase or ""
+
+        if issue and phase:
+            handle = f"{issue}-{phase}-{ident}"
+        elif issue:
+            handle = f"{issue}-{ident}"
+        else:
+            handle = ident
         if entry.get("billing"):
             handle += f"-{entry['billing']}"
 
