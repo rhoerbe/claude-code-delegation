@@ -1,4 +1,4 @@
-"""The mapping id is visible on the roster (issue #27).
+"""`ccd ls --json`: the mapping id, machine-readable (issue #27).
 
 `ccd-swap`'s job is "same work, different backend", which means reading the
 mapping a session was launched from and relaunching with `ccd launch <new-id>`.
@@ -29,8 +29,10 @@ MANIFEST = {
 
 STUB = "#!/usr/bin/env bash\nexit 0\n"
 
-# `ccd ls` is tab-separated with no header, and its consumers count fields.
-HANDLE, EFFORT, OWNER, MODEL, PID, STATUS, DRIFT, MAPPING = range(8)
+# `ccd ls`'s text form is tab-separated with no header, and its consumers count
+# fields — which is why the mapping went in a JSON flag instead of an 8th
+# column. These name the existing seven, to assert they did not move.
+HANDLE, EFFORT, OWNER, MODEL, PID, STATUS, DRIFT = range(7)
 
 
 @pytest.fixture
@@ -77,11 +79,22 @@ def cli(tmp_path, repo_root):
 
 
 def row(run, handle: str) -> list:
+    """A handle's row from the TEXT output."""
     for line in run("ls").stdout.splitlines():
         parts = line.split("\t")
         if parts and parts[0] == handle:
             return parts
     raise AssertionError(f"{handle} not on the roster:\n{run('ls').stdout}")
+
+
+def entry(run, handle: str) -> dict:
+    """A handle's entry from `ccd ls --json`."""
+    out = run("ls", "--json")
+    assert out.returncode == 0, out.stderr
+    for worker in json.loads(out.stdout)["workers"]:
+        if worker.get("handle") == handle:
+            return worker
+    raise AssertionError(f"{handle} not in --json:\n{out.stdout}")
 
 
 # ----------------------------------------------------------------------
@@ -90,18 +103,77 @@ def row(run, handle: str) -> list:
 
 def test_a_launched_session_shows_its_mapping(cli):
     cli("launch", "kimi-k3-max", "--issue", "143", "--phase", "2")
-    assert row(cli, "143-2-kimi-k3-max-api")[MAPPING] == "kimi-k3-max"
+    assert entry(cli, "143-2-kimi-k3-max-api")["mapping"] == "kimi-k3-max"
 
 
-def test_the_mapping_is_the_last_column(cli):
-    """Appended, so no existing index moves — see the next test."""
+def test_a_session_with_no_mapping_says_null_rather_than_omitting_the_key(cli):
+    """`null` and a missing key are different to a consumer: one means "this
+    session has no mapping", the other "this ccd does not know about
+    mappings"."""
+    cli("announce", "a-model", "low", CCD_HANDLE="hand-1")
+    hand = entry(cli, "hand-1")
+    assert "mapping" in hand
+    assert hand["mapping"] is None
+
+
+def test_liveness_is_the_boolean_not_the_rendered_text(cli):
+    """A consumer wants true/false; `up`/`dead` is the text output's
+    presentation of the same fact, and two spellings of one fact is what this
+    whole epic keeps removing."""
+    cli("launch", "kimi-k3-max", "--issue", "143", "--phase", "2",
+        CLAUDE_PID=str(os.getpid()))
+    assert entry(cli, "143-2-kimi-k3-max-api")["alive"] is True
+
+
+def test_liveness_is_null_when_there_is_no_pid_to_check(cli):
+    """Three states, not two: a participant with no pid is not dead, there is
+    simply nothing to ask about it. Squashing that to false would report every
+    plain-shell participant as gone."""
+    cli("announce", "a-model", "low", CCD_HANDLE="hand-1")
+    hand = entry(cli, "hand-1")
+    assert hand["pid"] is None
+    assert hand["alive"] is None
+    assert row(cli, "hand-1")[STATUS] == "-"
+
+
+def test_the_drift_marker_is_included(cli):
+    """It is the one thing in `ccd ls` the broker does not supply, so a
+    consumer would otherwise have to recompute it from transcripts."""
     cli("launch", "kimi-k3-max", "--issue", "143", "--phase", "2")
-    parts = row(cli, "143-2-kimi-k3-max-api")
-    assert len(parts) == 8
-    assert parts[-1] == "kimi-k3-max"
+    assert entry(cli, "143-2-kimi-k3-max-api")["drift"] == ""
 
 
-def test_the_columns_before_it_are_unchanged(cli):
+def test_both_forms_agree_about_drift(cli):
+    """They share one function, so a divergence would mean someone forked it."""
+    cli("launch", "kimi-k3-max", "--issue", "143", "--phase", "2")
+    handle = "143-2-kimi-k3-max-api"
+    assert row(cli, handle)[DRIFT] == entry(cli, handle)["drift"]
+
+
+def test_an_empty_roster_is_an_empty_list(cli):
+    """Not the text sentinel. A consumer should not have to string-match
+    "(no workers announced)"."""
+    out = cli("ls", "--json")
+    assert out.returncode == 0
+    assert json.loads(out.stdout) == {"workers": []}
+
+
+def test_an_unknown_flag_is_a_usage_error(cli):
+    out = cli("ls", "--wat")
+    assert out.returncode == 2
+    assert "usage: ccd ls [--json]" in out.stderr
+
+
+# ----------------------------------------------------------------------
+# the text output did not move — the whole reason for a flag
+# ----------------------------------------------------------------------
+
+def test_the_text_output_still_has_seven_fields(cli):
+    cli("launch", "kimi-k3-max", "--issue", "143", "--phase", "2")
+    assert len(row(cli, "143-2-kimi-k3-max-api")) == 7
+
+
+def test_the_text_columns_are_where_they_were(cli):
     cli("launch", "kimi-k3-max", "--issue", "143", "--phase", "2")
     parts = row(cli, "143-2-kimi-k3-max-api")
     assert parts[HANDLE] == "143-2-kimi-k3-max-api"
@@ -111,29 +183,26 @@ def test_the_columns_before_it_are_unchanged(cli):
     assert parts[STATUS] in ("up", "dead", "-")
 
 
+def test_the_text_output_never_mentions_the_mapping(cli):
+    """It is deliberately not an 8th column: consumers count fields, and two
+    ccd-swap bugs today were positional indices going stale."""
+    cli("launch", "kimi-k3-max", "--issue", "143", "--phase", "2")
+    assert "kimi-k3-max" not in row(cli, "143-2-kimi-k3-max-api")[1:]
+
+
 def test_the_existing_field_count_consumer_still_works(cli):
     """hosting's ccd_overview.py branches on `len(parts) >= 7` and reads
-    handle/effort/owner from 0/1/2, ignoring everything past the owner. Its
-    exact logic, run over the new output."""
+    handle/effort/owner from 0/1/2. Its exact logic."""
     cli("launch", "kimi-k3-max", "--issue", "143", "--phase", "2")
     parts = row(cli, "143-2-kimi-k3-max-api")
     assert len(parts) >= 7
-    effort, owner = parts[1], parts[2]
-    assert effort == "max"
-    assert owner == "-"
-
-
-def test_a_session_with_no_mapping_shows_a_dash(cli):
-    """A hand-announced participant, or one from before the field existed."""
-    cli("announce", "a-model", "low", CCD_HANDLE="hand-1")
-    assert row(cli, "hand-1")[MAPPING] == "-"
+    assert (parts[1], parts[2]) == ("max", "-")
 
 
 def test_there_is_still_no_header_row(cli):
     """A header parses as a worker literally named HANDLE."""
     cli("launch", "kimi-k3-max", "--issue", "143", "--phase", "2")
-    first = cli("ls").stdout.splitlines()[0]
-    assert not first.lower().startswith("handle\t")
+    assert not cli("ls").stdout.splitlines()[0].lower().startswith("handle\t")
 
 
 # ----------------------------------------------------------------------
@@ -147,7 +216,7 @@ def test_it_survives_the_skill_s_bare_reannounce(cli):
     handle = "143-2-kimi-k3-max-api"
     out = cli("announce", CCD_HANDLE=handle, CCD_MAPPING="kimi-k3-max")
     assert out.returncode == 0, out.stderr
-    assert row(cli, handle)[MAPPING] == "kimi-k3-max"
+    assert entry(cli, handle)["mapping"] == "kimi-k3-max"
 
 
 def test_it_comes_back_after_a_broker_restart(cli):
@@ -164,7 +233,7 @@ def test_it_comes_back_after_a_broker_restart(cli):
     assert "(no workers announced)" in cli("ls").stdout
 
     cli("announce", CCD_HANDLE=handle, CCD_MAPPING="kimi-k3-max")
-    assert row(cli, handle)[MAPPING] == "kimi-k3-max"
+    assert entry(cli, handle)["mapping"] == "kimi-k3-max"
 
 
 def test_a_hand_reannounce_without_the_variable_does_not_erase_it(cli):
@@ -175,32 +244,13 @@ def test_a_hand_reannounce_without_the_variable_does_not_erase_it(cli):
     handle = "143-2-kimi-k3-max-api"
     cli("announce", "moonshotai/kimi-k3", "max", CCD_HANDLE=handle,
         CCD_MAPPING=None)
-    assert row(cli, handle)[MAPPING] == "kimi-k3-max"
-
-
-# ----------------------------------------------------------------------
-# the machine-readable surface
-# ----------------------------------------------------------------------
-
-def test_the_dashboard_json_carries_it(cli):
-    cli("launch", "kimi-k3-max", "--issue", "143", "--phase", "2")
-    model = json.loads(cli("dashboard", "--json").stdout)
-    entry = next(s for s in model["sessions"]
-                 if s["handle"] == "143-2-kimi-k3-max-api")
-    assert entry["mapping"] == "kimi-k3-max"
-
-
-def test_the_dashboard_json_says_null_when_there_is_none(cli):
-    cli("announce", "a-model", "low", CCD_HANDLE="hand-1")
-    model = json.loads(cli("dashboard", "--json").stdout)
-    entry = next(s for s in model["sessions"] if s["handle"] == "hand-1")
-    assert entry["mapping"] is None
+    assert entry(cli, handle)["mapping"] == "kimi-k3-max"
 
 
 def test_the_id_is_one_launch_accepts(cli):
     """The whole point is relaunching with it, so a printed id the launcher
     rejects would be worse than printing nothing."""
     cli("launch", "kimi-k3-max", "--issue", "143", "--phase", "2")
-    ident = row(cli, "143-2-kimi-k3-max-api")[MAPPING]
+    ident = entry(cli, "143-2-kimi-k3-max-api")["mapping"]
     out = cli("launch", ident, "--handle", "relaunched")
     assert "no mapping" not in out.stderr, out.stderr

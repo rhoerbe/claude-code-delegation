@@ -38,7 +38,7 @@ USAGE = """usage: ccd <subcommand> [args]
   ccd ret [<handle>]
   ccd claim <worker> [<dispatcher>] [--force]
   ccd release <worker> [--force]
-  ccd ls
+  ccd ls [--json]                       (--json: roster entries plus drift)
   ccd dashboard [--scope <handle>] [--json] [--write <path>] [--rates <file>]
   ccd pick                              (interactive; prints the chosen id)
   ccd pick --list                       (non-interactive; id<TAB>label per line)
@@ -391,7 +391,42 @@ def cmd_release(argv: list) -> int:
 # by reading the announced session's own transcript (ADR-0008) and comparing
 # what it shows against what was declared. The roster itself is never touched
 # by what is found.
+def _drift_marker(worker: dict) -> str:
+    """`!` when the transcript disagrees with what was declared, else "".
+
+    Observed values come from the session's own transcript, never from the
+    broker (ADR-0003/0008) — located the same way `ccd dashboard` does. `!`
+    never fires on a field that was never declared: an undeclared `model` is
+    not a discrepancy, it is simply unknown.
+
+    Shared by both output forms so they cannot disagree about it. It is the
+    one thing in `ccd ls` the broker does not supply, which is why `--json`
+    adds it to the reply rather than leaving a consumer to recompute it.
+    """
+    from ccd_dashboard import transcript as tx
+
+    located = tx.locate(worker.get("cwd"), worker.get("session"))
+    if not located:
+        return ""
+    facts = tx.parse(located.path)
+    declared_effort = worker.get("effort") or None
+    declared_model = worker.get("model") or None
+    if facts.effort and declared_effort and facts.effort != declared_effort:
+        return "!"
+    if facts.model and declared_model and facts.model != declared_model:
+        return "!"
+    return ""
+
+
 def cmd_ls(argv: list) -> int:
+    as_json = False
+    for arg in argv:
+        if arg == "--json":
+            as_json = True
+        else:
+            _err("usage: ccd ls [--json]")
+            return 2
+
     try:
         reply = rpc("roster")
     except Unreachable:
@@ -402,47 +437,47 @@ def cmd_ls(argv: list) -> int:
         return 1
 
     workers = reply.get("workers") or []
+
+    if as_json:
+        # The broker's roster entries, verbatim, plus the drift marker this
+        # command computes itself. Verbatim because a shaped subset is a
+        # promise that has to be kept in step with the broker, and this is a
+        # lookup primitive whose whole value is being current — the cost,
+        # stated plainly, is that the broker's roster shape becomes part of
+        # what `ccd ls --json` returns.
+        #
+        # `alive` stays the broker's boolean (true/false, or null for a
+        # participant with no pid to check) rather than the `up`/`dead`/`-`
+        # text the rows render. One fact, one representation: the text form is
+        # a presentation choice belonging to the text output, and emitting
+        # both would be two spellings of one thing to keep in agreement.
+        #
+        # Keys are always present, `mapping` included, so a consumer can tell
+        # "this session has no mapping" (null) from "this ccd is too old to
+        # know about mappings" (key missing) without guessing.
+        print(json.dumps(
+            {"workers": [dict(w, drift=_drift_marker(w)) for w in workers]},
+            indent=2))
+        return 0
+
     if not workers:
         print("(no workers announced)")
         return 0
-
-    from ccd_dashboard import transcript as tx
 
     for worker in workers:
         handle = str(worker.get("handle"))
         effort = worker.get("effort") or "-"
         owner = worker.get("owner") or "-"
         model = worker.get("model") or "-"
-        mapping = worker.get("mapping") or "-"
         pid = worker.get("pid")
         if pid is None:
             pid_col, status = "-", "-"
         else:
             pid_col, status = str(pid), ("up" if worker.get("alive") else "dead")
 
-        # Observed values come from the session's own transcript, never from
-        # the broker (ADR-0003/0008) — located the same way `ccd dashboard`
-        # does. `!` never fires on a field that was never declared: an
-        # undeclared `model` is not a discrepancy, it is simply unknown.
-        drift = ""
-        located = tx.locate(worker.get("cwd"), worker.get("session"))
-        if located:
-            facts = tx.parse(located.path)
-            declared_effort = worker.get("effort") or None
-            declared_model = worker.get("model") or None
-            if facts.effort and declared_effort and facts.effort != declared_effort:
-                drift = "!"
-            elif facts.model and declared_model and facts.model != declared_model:
-                drift = "!"
+        drift = _drift_marker(worker)
 
-        # Appended, not inserted. `ccd ls` has no header on purpose (a header
-        # row parses as a worker literally named "HANDLE"), so its consumers
-        # count fields — hosting's ccd_overview.py branches on the field count
-        # and reads handle/effort/owner from 0/1/2. Appending leaves every
-        # existing index where it was; putting `mapping` next to `model` where
-        # it reads better would shift pid/status/drift right by one.
-        print("\t".join([handle, effort, owner, model, pid_col, status, drift,
-                         mapping]))
+        print("\t".join([handle, effort, owner, model, pid_col, status, drift]))
     return 0
 
 

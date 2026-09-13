@@ -332,6 +332,13 @@ no liveness at all. `ccd claim w1 other-disp --force` takes the worker over.
 
 ## Fleet dashboard
 
+`ccd ls --json` gives the same roster as data rather than columns: every
+field the broker holds, including the `mapping` id a session was launched
+from, plus the drift marker. That is what a script reads when it needs to
+relaunch the same work on a different backend — the text rows carry no mapping
+and deliberately never will, because they have no header and their consumers
+count fields.
+
 `ccd ls` answers *who is announced*. `ccd dashboard` answers *what is the
 fleet doing* — the same roster plus what each session is actually up to,
 rendered as markdown and typed from any shell:
