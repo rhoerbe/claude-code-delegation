@@ -479,7 +479,7 @@ ccd announce [<handle>] <model> <effort> [--exclusive] [--force]
 ccd ret [<handle>]
 ccd claim <worker> [<dispatcher>] [--force]   ($CCD_HANDLE is the dispatcher)
 ccd release <worker> [--force]
-ccd ls
+ccd ls [--json]                       (--json: roster entries plus drift)
 ccd dashboard [--scope <handle>] [--json] [--write <path>] [--rates <file>]
 ccd pick                              (interactive; prints the chosen id)
 ccd pick --list                       (non-interactive; id<TAB>label per line)
@@ -511,6 +511,14 @@ the listing and prompt on stderr, the id alone on stdout, so `id=$(ccd pick)`
 captures exactly the id. It is **interactive only** and refuses when its input
 is not a terminal, so there is no `ccd pick | ccd launch` pipeline; script with
 `ccd launch <id>`, which needs no picking.
+
+`ccd ls --json` is the machine-readable roster: each entry as the broker
+returns it — including `mapping`, the manifest id the session was launched
+from — plus the `drift` marker `ccd ls` computes itself. `alive` is the
+broker's boolean (`null` when there is no pid to check), not the `up`/`dead`
+text the rows render. The text output is unchanged: it has no header and its
+consumers count fields, so new information goes in the flag rather than an
+eighth column.
 
 `ccd pick --list` is the non-interactive half: `id<TAB>label` per line on
 stdout, no prompt, no terminal needed. The id comes first because the id is

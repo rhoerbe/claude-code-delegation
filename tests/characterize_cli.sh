@@ -87,6 +87,7 @@ normalise() {
       -e "s#| $REPO_NAME |#| <REPO> |#g" \
       -e "s#$HOME#<HOME>#g" \
       -e "s/pid [0-9][0-9]*/pid <PID>/g" \
+      -e 's/"pid": [0-9][0-9]*/"pid": <PID>/g' \
       -e "s/\t[0-9][0-9]*\t/\t<PID>\t/g" \
       -e "s/up [0-9][0-9]*h\{0,1\}[0-9][0-9]*m/up <UP>/g" \
       -e "s/ccd-broker [0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*/ccd-broker <VERSION>/g" \
@@ -201,6 +202,11 @@ record_case announce-exclusive-taken -- announce w1 a-model low --exclusive
 record_case announce-env-handle CCD_HANDLE=disp -- announce a-model high
 record_case announce-no-pid CLAUDE_PID= -- announce w-nopid a-model low
 record_case ls-populated -- ls
+# The machine-readable form. Additive: the text rows above are unchanged,
+# which is the whole reason the mapping went in a flag rather than an 8th
+# column — `ccd ls` has no header and its consumers count fields.
+record_case ls-json -- ls --json
+record_case ls-unknown-flag -- ls --wat
 record_case claim-ok -- claim w1 disp
 record_case claim-other-dispatcher -- claim w1 someone-else
 record_case claim-force -- claim w1 someone-else --force
@@ -285,6 +291,10 @@ record_case launch-no-id-refuses \
   CCD_MAPPINGS="$SAMPLE_MANIFEST" \
   -- launch
 record_case launch-ls-after CCD_MAPPINGS="$SAMPLE_MANIFEST" -- ls
+# The reason `--json` exists: a launched session's mapping id, which the text
+# form deliberately does not carry. The case in the roster section above shows
+# the null shape; this one shows a real id.
+record_case launch-ls-json CCD_MAPPINGS="$SAMPLE_MANIFEST" -- ls --json
 record_case launch-ret-billed -- ret "119-3-kimi-k3-1m-max-api"
 record_case launch-ret-unbilled -- ret "119-3-claude-sonnet-5-medium"
 record_case launch-ret-explicit -- ret exact-name

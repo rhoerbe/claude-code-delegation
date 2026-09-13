@@ -1,0 +1,44 @@
+argv: ccd ls --json
+exit: 0
+--- stdout ---
+{
+  "workers": [
+    {
+      "handle": "disp",
+      "effort": "high",
+      "model": null,
+      "pid": <PID>,
+      "mapping": null,
+      "owner": null,
+      "cwd": "<REPO>",
+      "session": null,
+      "alive": true,
+      "drift": ""
+    },
+    {
+      "handle": "w-nopid",
+      "effort": "low",
+      "model": null,
+      "pid": null,
+      "mapping": null,
+      "owner": null,
+      "cwd": "<REPO>",
+      "session": null,
+      "alive": null,
+      "drift": ""
+    },
+    {
+      "handle": "w1",
+      "effort": "high",
+      "model": null,
+      "pid": <PID>,
+      "mapping": null,
+      "owner": null,
+      "cwd": "<REPO>",
+      "session": null,
+      "alive": true,
+      "drift": ""
+    }
+  ]
+}
+--- stderr ---
