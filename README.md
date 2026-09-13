@@ -37,9 +37,11 @@ sketch if you are building your own, since nothing here depends on it:
   Bash-tool subshell does not reliably inherit `XDG_RUNTIME_DIR`, and the
   fallback quietly starts a *second* broker that neither side reports as an
   error);
-- a role that installs `skills/ccd-worker.md` as
-  `~/.claude/skills/ccd-worker/SKILL.md` — the loader scans for a directory
-  containing `SKILL.md`, and silently ignores a flat `.md` file;
+- a role that installs each file in `skills/` as
+  `~/.claude/skills/<name>/SKILL.md` — the loader scans for a directory
+  containing `SKILL.md`, and silently ignores a flat `.md` file. There are two
+  of them, `ccd-worker.md` and `ccd-dispatcher.md`, and a role that installs
+  only the first leaves the dispatcher role unavailable;
 - **no launch wrapper** — that used to be the third item here, and `ccd launch`
   replaced it. Deriving the handle, reserving it with `announce --exclusive`,
   and exec'ing the named backend launcher all ship in this repo now; what the
@@ -515,7 +517,7 @@ mapping names with `--name`/`--model`/`--effort`. It sets `CCD_MAPPING` in the
 launched session and removes `CCD_MODEL`/`CCD_EFFORT`, so one variable
 describes the session and nothing can contradict it. Called with no id it
 picks first. Anything after `--` is passed to the launcher untouched — which is
-how `-- "/ccd-worker"` loads the skill. See
+how `-- "/ccd-worker"` (or `-- "/ccd-dispatcher"`) loads the skill. See
 [USAGE.md](USAGE.md#starting-a-dispatcher).
 
 Full protocol semantics (wire format, blocking/dequeue-on-ack, the
@@ -526,10 +528,15 @@ Full protocol semantics (wire format, blocking/dequeue-on-ack, the
 ## Worker/dispatcher skill and tests
 
 - [`skills/ccd-worker.md`](skills/ccd-worker.md) — the Claude Code skill a
-  worker (or a dispatcher, same shape) loads: announce on start, check the
-  declared effort (and, on a bare launch, the model) against what is
-  actually running, `ccd recv` as the last tool call every turn,
+  worker loads: it has been given no task, so announce on start, check the
+  declared effort (and, on a bare launch, the model) against what is actually
+  running, then `ccd recv` as the last tool call every turn,
   reply-then-recv-again, retire on exit, and the Esc-interrupt note above.
+- [`skills/ccd-dispatcher.md`](skills/ccd-dispatcher.md) — the skill the
+  session you work in loads. Same broker, different job: its input is the
+  human at the keyboard, so it announces and then waits to be asked, rather
+  than living in `ccd recv`. It launches workers, claims them, hands out work
+  and folds the results back in (issue #27).
 - [`tests/ccd_smoke.sh`](tests/ccd_smoke.sh) — an end-to-end smoke test
   against a private, throwaway broker instance. Run it with
   `tests/ccd_smoke.sh`.
