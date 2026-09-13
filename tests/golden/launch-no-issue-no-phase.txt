@@ -1,0 +1,5 @@
+argv: ccd launch kimi-k3-1m-max
+exit: 0
+--- stdout ---
+{"argv0": "<TMP>/bin/stub-claude-openrouter", "args": ["--name", "kimi-k3-1m-max-api", "--model", "moonshotai/kimi-k3[1m]", "--effort", "max"], "CCD_MAPPING": "kimi-k3-1m-max", "CCD_HANDLE": "kimi-k3-1m-max-api", "CCD_SOCKET": "<TMP>/ccd.sock", "CCD_MODEL": null, "CCD_EFFORT": null}
+--- stderr ---

@@ -187,6 +187,12 @@ record_case pick-list-no-manifest -- pick --list
 record_case launch-no-manifest -- launch
 record_case launch-unknown-arg -- launch --wat
 record_case launch-issue-no-value -- launch some-id --issue
+# hosting ADR-0002 (revised 2026-09-12): the one hard rule — a phase with no
+# issue is a usage error, checked before the manifest even loads (this
+# harness's default CCD_MAPPINGS points at a file that never exists, so this
+# case proves that: the message here is the usage error, never
+# "no mapping manifest").
+record_case launch-phase-no-issue -- launch some-id --phase 3
 
 echo "=== broker up ==="
 record_case broker-start -- broker start
@@ -282,6 +288,17 @@ record_case launch-without-billing \
 record_case launch-explicit-handle-ignores-billing \
   CCD_MAPPINGS="$SAMPLE_MANIFEST" PATH="$STUB_PATH" \
   -- launch kimi-k3-1m-max --handle exact-name
+# hosting ADR-0002 (revised 2026-09-12): the two shorter shapes now reachable
+# with issue/phase optional — <issue>-<mapping-id>[-<billing>] and the bare
+# <mapping-id>[-<billing>]. Both still run with stdin redirected like every
+# other case here; that no longer matters to these two since neither flag is
+# omitted-by-prompt, it's omitted outright.
+record_case launch-issue-no-phase \
+  CCD_MAPPINGS="$SAMPLE_MANIFEST" PATH="$STUB_PATH" \
+  -- launch claude-sonnet-5-medium --issue 42
+record_case launch-no-issue-no-phase \
+  CCD_MAPPINGS="$SAMPLE_MANIFEST" PATH="$STUB_PATH" \
+  -- launch kimi-k3-1m-max
 record_case launch-unknown-mapping \
   CCD_MAPPINGS="$SAMPLE_MANIFEST" \
   -- launch not-a-real-id --issue 1 --phase 1
@@ -298,6 +315,8 @@ record_case launch-ls-json CCD_MAPPINGS="$SAMPLE_MANIFEST" -- ls --json
 record_case launch-ret-billed -- ret "119-3-kimi-k3-1m-max-api"
 record_case launch-ret-unbilled -- ret "119-3-claude-sonnet-5-medium"
 record_case launch-ret-explicit -- ret exact-name
+record_case launch-ret-issue-no-phase -- ret "42-claude-sonnet-5-medium"
+record_case launch-ret-no-issue-no-phase -- ret "kimi-k3-1m-max-api"
 record_case launch-ls-clean -- ls
 
 # `ccd announce` resolving model and effort from $CCD_MAPPING. The bug behind

@@ -3,6 +3,8 @@ exit: 0
 --- stdout ---
 119-3-claude-sonnet-5-medium	medium	-	claude-sonnet-5	<PID>	up	
 119-3-kimi-k3-1m-max-api	max	-	moonshotai/kimi-k3[1m]	<PID>	up	
+42-claude-sonnet-5-medium	medium	-	claude-sonnet-5	<PID>	up	
 disp	high	-	-	<PID>	up	
 exact-name	max	-	moonshotai/kimi-k3[1m]	<PID>	up	
+kimi-k3-1m-max-api	max	-	moonshotai/kimi-k3[1m]	<PID>	up	
 --- stderr ---

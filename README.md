@@ -535,6 +535,16 @@ picks first. Anything after `--` is passed to the launcher untouched — which i
 how `-- "/ccd-worker"` (or `-- "/ccd-dispatcher"`) loads the skill. See
 [USAGE.md](USAGE.md#starting-a-dispatcher).
 
+`--issue` and `--phase` are each independently optional (hosting
+[ADR-0002](docs/adr/0002-ccd-session-label-convention.md), revised
+2026-09-12) — the derived handle drops whichever is missing rather than
+demanding both, down to a bare `<mapping-id>[-billing]` when neither is
+given. The one rule that isn't optional: `--phase` with no `--issue` is a
+usage error (exit 2), immediately, since a phase subdivides an issue and
+names nothing on its own. On a real terminal with neither flag given, `ccd
+launch` still prompts — but a blank answer now means "omit it", not "ask
+again".
+
 Full protocol semantics (wire format, blocking/dequeue-on-ack, the
 `Transport` seam) are documented in `ccd_broker/broker.py` and
 `ccd_broker/transport_uds.py`, and summarized in
