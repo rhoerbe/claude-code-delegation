@@ -118,6 +118,11 @@ def build(roster: list, scope: Optional[str] = None, *,
             # directly reaches it exactly as well as a slot alias.
             "model": entry.get("model") or None,
             "effort": entry.get("effort") or None,
+            # Which manifest entry started this session. `ccd launch` sends it
+            # and the roster carries it; it is what relaunching the same work
+            # on a different backend needs, since the id is exactly what
+            # `ccd launch` takes back.
+            "mapping": entry.get("mapping") or None,
             "owner": entry.get("owner") or None,
             "tree": {
                 "cwd": cwd,

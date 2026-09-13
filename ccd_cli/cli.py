@@ -273,6 +273,14 @@ def cmd_announce(argv: list) -> int:
         "effort": effort,
         # Only a resolved id, never the typed positional — see above.
         "model": model if from_mapping else "",
+        # The mapping this session was launched from. The broker carries a
+        # known mapping forward when an announce omits it, so this was
+        # invisible for as long as the roster survived — and lost for good the
+        # moment it did not. A broker restart empties the roster, every
+        # session re-announces, and the id no longer exists anywhere even
+        # though `$CCD_MAPPING` is sitting right here in the environment.
+        # Sending it makes the re-announce restore what the restart dropped.
+        "mapping": mapping,
         "cwd": os.getcwd(),
         "session": os.environ.get("CLAUDE_CODE_SESSION_ID", ""),
         "pid": os.environ.get("CLAUDE_PID", ""),
@@ -405,6 +413,7 @@ def cmd_ls(argv: list) -> int:
         effort = worker.get("effort") or "-"
         owner = worker.get("owner") or "-"
         model = worker.get("model") or "-"
+        mapping = worker.get("mapping") or "-"
         pid = worker.get("pid")
         if pid is None:
             pid_col, status = "-", "-"
@@ -426,7 +435,14 @@ def cmd_ls(argv: list) -> int:
             elif facts.model and declared_model and facts.model != declared_model:
                 drift = "!"
 
-        print("\t".join([handle, effort, owner, model, pid_col, status, drift]))
+        # Appended, not inserted. `ccd ls` has no header on purpose (a header
+        # row parses as a worker literally named "HANDLE"), so its consumers
+        # count fields — hosting's ccd_overview.py branches on the field count
+        # and reads handle/effort/owner from 0/1/2. Appending leaves every
+        # existing index where it was; putting `mapping` next to `model` where
+        # it reads better would shift pid/status/drift right by one.
+        print("\t".join([handle, effort, owner, model, pid_col, status, drift,
+                         mapping]))
     return 0
 
 
