@@ -533,7 +533,7 @@ launched session and removes `CCD_MODEL`/`CCD_EFFORT`, so one variable
 describes the session and nothing can contradict it. Called with no id it
 picks first. Anything after `--` is passed to the launcher untouched — which is
 how `-- "/ccd-worker"` (or `-- "/ccd-dispatcher"`) loads the skill. See
-[USAGE.md](USAGE.md#starting-a-dispatcher).
+[USAGE.md](USAGE.md#use-case-a-one-issue-a-dispatcher-and-some-workers).
 
 `--issue` and `--phase` are each independently optional (hosting
 [ADR-0002](docs/adr/0002-ccd-session-label-convention.md), revised
