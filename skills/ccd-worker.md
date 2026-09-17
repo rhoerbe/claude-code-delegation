@@ -136,16 +136,27 @@ session is always.
 ## 3. On a message, act, reply, recv again
 
 Everything in this section applies **only after `ccd recv` has printed a
-message**. It prints as `from: <handle>, msg: <text>`. When that happens:
+message**. It prints one line, the sender then the text: `<handle>: <message>`.
+When that happens:
 
 1. Do the work that message describes — that text, not something you thought
    of yourself.
 2. Send your result back to the sender: `ccd send <from-handle> "<result>"`.
+   Your own handle travels with it automatically ($CCD_HANDLE is the default
+   sender), so there is no `-f` to remember.
 3. Immediately call `ccd recv "$CCD_HANDLE" -t 86400` again to wait for the
    next task.
 
 The message is the task, and the only task. If it is unclear, `ccd send` the
 sender a question rather than guessing at a larger job than you were given.
+
+**If the sender printed as `unknown`, that is not a handle** — it is what the
+broker stamps on a message whose sender claimed none, so there is no address
+there to reply to. `ccd send unknown "..."` is refused for that reason, rather
+than queueing your report where nothing will collect it. Look for a handle
+named in the message text itself and reply to that; if there is none, say so to
+the human at your terminal and park again. Do the work either way — an
+unaddressable reply does not make the task less real.
 
 ## 4. Retire before exiting
 

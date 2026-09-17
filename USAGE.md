@@ -47,8 +47,8 @@ each one differs, though:
   what drives the loop turn after turn.
 
 [The loop, end to end](#the-loop-end-to-end) below shows the second kind —
-read `$ ccd send w1 "..." -f disp` there as *the dispatcher session's own tool
-call*, not something you type at a shell.
+read `$ ccd send w1 "..."` there as *the dispatcher session's own tool call*,
+not something you type at a shell.
 
 ## One-time: start the broker
 
@@ -439,7 +439,7 @@ console output for readability — not something typed at a shell. The
 dispatcher hands `w1` a task with its own `ccd send`:
 
 ```console
-$ ccd send w1 "Summarise the failure modes in tests/ccd_smoke.sh" -f disp
+$ ccd send w1 "Summarise the failure modes in tests/ccd_smoke.sh"
 sent (id=m1)
 ```
 
@@ -454,7 +454,7 @@ and parks again with its own tool calls — that last step is what keeps it
 available:
 
 ```console
-$ ccd send disp "8 cases; only step 4 exercises re-queue-on-disconnect" -f w1
+$ ccd send disp "8 cases; only step 4 exercises re-queue-on-disconnect"
 sent (id=m2)
 $ ccd recv w1 -t 86400
 ```
@@ -462,8 +462,13 @@ $ ccd recv w1 -t 86400
 Always give `recv` a long timeout. A short one just means falling out and
 calling `recv` again for no benefit.
 
-Pass `-f` on every `send`. It is optional, and a message sent without it arrives
-attributed to `unknown`, leaving the receiver with no handle to reply to.
+`-f` is optional and a session rarely needs it: `send` defaults the sender to
+`$CCD_HANDLE`, which `ccd launch` sets, so a participant's identity travels
+without anyone remembering a flag. From a plain shell with no `$CCD_HANDLE`
+there is nothing to default to, and the message arrives attributed to `unknown`
+— fine for a poke you do not expect an answer to, and `unknown` is a reserved
+name the broker refuses as a destination, so a receiver cannot reply into a
+queue nobody drains. Pass `-f` when you want a shell send to be answerable.
 
 ## Steering a worker by hand
 

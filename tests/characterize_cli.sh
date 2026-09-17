@@ -225,6 +225,21 @@ record_case recv-ok -- recv w1 -t 5
 record_case recv-timeout -- recv w1 -t 1
 record_case recv-env-handle CCD_HANDLE=w1 -- recv -t 1
 
+# The sender travels without -f (#36). `disp` below comes from $CCD_HANDLE, not
+# from a flag, and the recv that follows is the proof: this pair is what was
+# missing when a worker replied to the `unknown` its recv had printed and its
+# report queued on a handle that exists nowhere.
+record_case send-default-sender CCD_HANDLE=disp -- send w1 hello-from-env
+record_case recv-shows-default-sender -- recv w1 -t 5
+# No $CCD_HANDLE to default to, so nothing is claimed and the broker stamps it:
+# ADR-0007's escape hatch, still reachable, now only on purpose.
+record_case send-anonymous -- send w1 anonymous-poke
+record_case recv-shows-the-stamp -- recv w1 -t 5
+# ...and the stamp is not an address. Both halves of the black hole: it cannot
+# be sent to, and it cannot be held either.
+record_case send-to-the-stamp CCD_HANDLE=w1 -- send unknown my-report
+record_case announce-reserved-name -- announce unknown a-model low
+
 echo "=== dashboard ==="
 record_case dashboard-default -- dashboard
 record_case dashboard-scope -- dashboard --scope w1

@@ -1,0 +1,6 @@
+argv: ccd send unknown my-report
+exit: 1
+--- stdout ---
+
+--- stderr ---
+ccd send: 'unknown' is not a handle: it is what this broker stamps on a message whose sender claimed nothing, so nothing collects what is queued there. Reply to the handle named in the message text, or ask the human at your terminal who sent it.

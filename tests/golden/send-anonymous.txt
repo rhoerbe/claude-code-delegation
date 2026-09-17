@@ -1,0 +1,5 @@
+argv: ccd send w1 anonymous-poke
+exit: 0
+--- stdout ---
+sent (id=m3)
+--- stderr ---
