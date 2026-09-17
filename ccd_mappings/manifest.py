@@ -101,12 +101,18 @@ def _short_model(model: str) -> str:
     return model.rsplit("/", 1)[-1]
 
 
-def _slug(text: str) -> str:
+def slug(text: str) -> str:
     """Lowercase `text` into one id-safe word.
 
     `claude-sonnet-5[1m]` -> `claude-sonnet-5-1m`: the context-window suffix is
     part of what distinguishes two otherwise identical entries, so it survives
     into the id rather than being stripped.
+
+    Public since #27: `ccd launch` composes a handle from a mapping id and the
+    free-form `--issue`/`--phase` it was given, and the mapping id half was
+    already slugged here while the other halves were not — so `--issue "auth
+    epic"` produced `auth epic-kimi-k3-max-api`, one derived string with one
+    third of it normalised. One spelling of "make this id-safe", used by both.
     """
     out = re.sub(r"[^a-z0-9._-]+", "-", text.strip().lower())
     out = re.sub(r"-{2,}", "-", out).strip("-.")
@@ -119,12 +125,12 @@ def entry_id(entry: dict, *, with_launcher: bool = False) -> str:
     `with_launcher` appends the launcher; `ids()` applies it to *every* member
     of a colliding group, so the result never depends on file order.
     """
-    parts = [_slug(_short_model(entry.get("model") or ""))]
+    parts = [slug(_short_model(entry.get("model") or ""))]
     effort = (entry.get("effort") or "").strip()
     if effort:
-        parts.append(_slug(effort))
+        parts.append(slug(effort))
     if with_launcher:
-        parts.append(_slug(entry.get("launcher") or ""))
+        parts.append(slug(entry.get("launcher") or ""))
     return "-".join(p for p in parts if p)
 
 
@@ -298,7 +304,7 @@ def validate(doc) -> list:
         # Check the model's own slug, not the assembled id: a model of "!!!"
         # slugs to nothing and would otherwise leave an id made only of the
         # effort — a wrong name rather than a refused one.
-        if isinstance(model, str) and model.strip() and not _slug(
+        if isinstance(model, str) and model.strip() and not slug(
                 _short_model(model)):
             problems.append(
                 f"{label}: 'model' {model!r} does not yield a usable id"

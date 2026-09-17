@@ -1,0 +1,6 @@
+argv: ccd launch kimi-k3-1m-max --handle my session
+exit: 2
+--- stdout ---
+
+--- stderr ---
+ccd launch: --handle 'my session' contains whitespace; a handle is an address others have to type back, and `ccd ls` rows are tab-separated

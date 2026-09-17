@@ -327,9 +327,23 @@ record_case launch-ls-after CCD_MAPPINGS="$SAMPLE_MANIFEST" -- ls
 # form deliberately does not carry. The case in the roster section above shows
 # the null shape; this one shows a real id.
 record_case launch-ls-json CCD_MAPPINGS="$SAMPLE_MANIFEST" -- ls --json
+
+# A handle is an address others have to type back (#27). `--issue`/`--phase`
+# are components of a derived name and get slugged like the mapping id beside
+# them; `--handle` is the whole name, so it is validated rather than rewritten.
+record_case launch-issue-with-a-space \
+  CCD_MAPPINGS="$SAMPLE_MANIFEST" PATH="$STUB_PATH" \
+  -- launch kimi-k3-1m-max --issue "auth epic"
+record_case launch-issue-slugs-to-nothing \
+  CCD_MAPPINGS="$SAMPLE_MANIFEST" PATH="$STUB_PATH" \
+  -- launch kimi-k3-1m-max --issue "   " --phase 3
+record_case launch-handle-with-a-space \
+  CCD_MAPPINGS="$SAMPLE_MANIFEST" PATH="$STUB_PATH" \
+  -- launch kimi-k3-1m-max --handle "my session"
 record_case launch-ret-billed -- ret "119-3-kimi-k3-1m-max-api"
 record_case launch-ret-unbilled -- ret "119-3-claude-sonnet-5-medium"
 record_case launch-ret-explicit -- ret exact-name
+record_case launch-ret-slugged-issue -- ret "auth-epic-kimi-k3-1m-max-api"
 record_case launch-ret-issue-no-phase -- ret "42-claude-sonnet-5-medium"
 record_case launch-ret-no-issue-no-phase -- ret "kimi-k3-1m-max-api"
 record_case launch-ls-clean -- ls

@@ -1,0 +1,6 @@
+argv: ccd launch kimi-k3-1m-max --issue     --phase 3
+exit: 2
+--- stdout ---
+
+--- stderr ---
+ccd launch: --issue '   ' has nothing a handle can be built from; give a --issue containing letters or digits

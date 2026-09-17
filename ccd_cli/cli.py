@@ -794,6 +794,20 @@ def cmd_launch(argv: list) -> int:
         entry = m.find(doc, ident)
 
     if handle_override:
+        # Validated, never rewritten (#27). `--issue`/`--phase` below are
+        # components of a derived name and get normalised like the mapping id
+        # beside them; `--handle` is the whole name, chosen deliberately, so
+        # silently returning something else would be the surprise. Whitespace
+        # is the one thing refused rather than a full id pattern: a tab or a
+        # newline cannot be carried by `ccd ls` at all (its rows are
+        # tab-joined and line-separated, so such a handle renders as extra
+        # columns or a phantom record), and a space merely forces every caller
+        # to quote it. Mixed case and other punctuation stay legal.
+        if any(ch.isspace() for ch in handle_override):
+            _err(f"ccd launch: --handle {handle_override!r} contains "
+                 "whitespace; a handle is an address others have to type back, "
+                 "and `ccd ls` rows are tab-separated")
+            return 2
         handle = handle_override
     else:
         # hosting's ADR-0002 (revised 2026-09-12, issue/phase optional): six
@@ -829,6 +843,27 @@ def cmd_launch(argv: list) -> int:
             if phase is None:
                 return 2
         phase = phase or ""
+
+        # Both are free-form text joined into an id-shaped name whose other
+        # component, the mapping id, ccd_mappings has already slugged (#27).
+        # Left raw, `--issue "auth epic"` derived `auth epic-kimi-k3-max-api`:
+        # accepted by the broker, printed intact by `ccd ls`, and quoted by
+        # every caller from then on. Slugging here makes the whole handle
+        # derived the same way rather than a third of it.
+        #
+        # A value that slugs to nothing ("  ", "///") is a usage error rather
+        # than an omission, and the issue case is load-bearing: silently
+        # treating it as absent while a phase was given would compose
+        # `<phase>-<mapping-id>` through the back door -- the exact shape the
+        # hard rule at the top of this function refuses at the front door.
+        for name, value in (("issue", issue), ("phase", phase)):
+            if value and not m.slug(value):
+                _err(f"ccd launch: --{name} {value!r} has nothing a handle can "
+                     f"be built from; give a --{name} containing letters or "
+                     "digits")
+                return 2
+        issue = m.slug(issue) if issue else ""
+        phase = m.slug(phase) if phase else ""
 
         if issue and phase:
             handle = f"{issue}-{phase}-{ident}"

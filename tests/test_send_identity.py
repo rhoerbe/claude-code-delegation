@@ -120,3 +120,25 @@ def test_every_identity_taking_subcommand_defaults_its_handle(repo_root, command
     fn = next(n for n in ast.walk(tree)
               if isinstance(n, ast.FunctionDef) and n.name == f"cmd_{command}")
     assert "_env_handle()" in ast.unparse(fn), command
+
+
+# ----------------------------------------------------------------------
+# a handle the roster cannot render is refused where it enters (#27)
+# ----------------------------------------------------------------------
+
+@pytest.mark.parametrize("bad", ["a\tb", "a\nb", "a\rb", "a\x00b"])
+def test_a_handle_the_roster_cannot_represent_is_refused(broker, call, bad):
+    """`ccd ls` joins columns with tabs and prints one record per line, so a
+    handle carrying either renders as extra columns or as a phantom record --
+    and every consumer of that output counts fields or lines."""
+    r = call(broker, "announce", handle=bad, effort="medium")
+    assert not r.get("ok"), repr(r)
+    assert "cannot represent" in r.get("reason", "")
+
+
+def test_a_handle_containing_a_space_is_still_allowed(broker, call):
+    """Deliberately not refused. A space breaks no output format -- it only
+    forces callers to quote -- and ADR-0005 keeps hand-announced participants
+    first-class rather than holding them to `ccd launch`'s conventions.
+    `ccd launch` slugs its own derived handles regardless."""
+    assert call(broker, "announce", handle="hand rolled", effort="low").get("ok")
