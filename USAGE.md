@@ -144,10 +144,13 @@ $ ccd launch claude-sonnet-5-medium --issue auth-rewrite --phase 119 -- "/ccd-wo
 
 → `auth-rewrite-119-claude-sonnet-5-medium-sub`.
 
-**Use a name with no spaces.** Nothing rejects `--issue "auth rewrite"` — the
-handle becomes `auth rewrite-claude-sonnet-5-medium-sub`, which the broker
-accepts and `ccd ls` prints intact — but you then have to quote that handle
-every time you name it. A hyphenated name avoids the whole question.
+**Spaces and capitals are fine to type; the handle is normalised.**
+`--issue "Auth Rewrite" --phase "Round 2"` derives
+`auth-rewrite-round-2-claude-sonnet-5-medium-sub`. Issue and phase are
+components of a derived name, and they get the same treatment the mapping id
+beside them already gets — one id-safe spelling, so a handle never arrives with
+a space in it that every later caller has to quote. A value with nothing usable
+in it at all (`--issue "   "`) is a usage error rather than a silent omission.
 
 If you want the handle to say something the derivation cannot, `--handle`
 overrides the entire shape:
@@ -155,6 +158,11 @@ overrides the entire shape:
 ```console
 $ ccd launch claude-opus-5-high --handle auth-rewrite-lead -- "/ccd-dispatcher"
 ```
+
+`--handle` is **validated rather than normalised** — it is the whole name, and
+you chose it deliberately, so handing you back a different one would be the
+surprise. Whitespace is refused (exit 2); mixed case and punctuation are yours
+to use.
 
 You lose the model identity from the name when you do that, so the roster no
 longer tells you what a session is running — `ccd ls`'s model column still
@@ -266,7 +274,10 @@ export CCD_SOCKET="/run/user/$(id -u)/ccd-$USER.sock"
   or `<mapping-id>[-<billing>]`. At a terminal it offers a prompt for whichever
   of `--issue`/`--phase` you did not pass; a blank answer means *omit it*, not
   *ask again*. `--phase` without `--issue` is a usage error (exit 2), not a
-  prompt. `--handle NAME` overrides the whole shape.
+  prompt. Issue and phase are slugged into the handle the same way the mapping
+  id already is (`"Round 2"` → `round-2`); one that slugs to nothing is a usage
+  error. `--handle NAME` overrides the whole shape and is validated instead of
+  slugged — whitespace refused, everything else yours.
 - **Reserves that handle** with `ccd announce --exclusive` before starting
   anything, so two windows started from the same mapping cannot race for one
   queue. If the name is taken it appends an ordinal and takes the next one —
@@ -446,6 +457,14 @@ populated only when a mapping resolved it.
 Handles must be **unique among live sessions**. Two sessions sharing one
 handle race for the same queue, and each message goes to whichever calls
 `recv` first.
+
+A handle may not contain a tab, a newline or any other control character — the
+broker refuses one at `announce`, because the rows above are tab-separated and
+one record per line, so such a handle would render as extra columns or as a
+phantom record. A space is still allowed here: it breaks no output format, it
+only forces callers to quote, and a hand-announced participant is first-class
+rather than held to `ccd launch`'s conventions. `ccd launch` slugs its own
+derived handles regardless.
 
 `ccd ls --json` gives the same roster as data rather than columns: every field
 the broker holds, including the `mapping` id a session was launched from, plus

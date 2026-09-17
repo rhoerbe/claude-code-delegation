@@ -1,0 +1,5 @@
+argv: ccd ret auth-epic-kimi-k3-1m-max-api
+exit: 0
+--- stdout ---
+retired auth-epic-kimi-k3-1m-max-api
+--- stderr ---

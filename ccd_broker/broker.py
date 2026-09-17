@@ -93,6 +93,13 @@ nothing, so a human at a third shell can always reach any worker. Sender
 identity is self-asserted (ADR-0006), so this stops a confused dispatcher, not a
 dishonest one.
 
+A handle the roster cannot render is refused at `announce` (1.9.0, #27): a tab
+or a newline in a handle would make `ccd ls` emit a row with extra columns or
+two rows for one record, and every consumer of that output counts fields or
+lines. A space is deliberately still allowed — it breaks no format, and ADR-0005
+keeps hand-announced participants first-class; `ccd launch` slugs the handles it
+derives itself.
+
 The anonymous sender's stamp is a reserved name (1.8.0, #36): a `send` carrying
 no `from` still arrives attributed to `unknown`, but `unknown` may no longer be
 announced or sent *to*. Both halves of that were a black hole — a worker
@@ -131,7 +138,7 @@ from typing import Any, Callable, Optional, Protocol, runtime_checkable
 # not a slot alias — "slot" was tried and dropped before release, see the
 # module docstring's Vocabulary section); roster reads lazily reap a dead
 # pid (claude-code-delegation#13).
-VERSION = "1.8.0"
+VERSION = "1.9.0"
 
 #: What this broker stamps on a message whose sender claimed nothing, and a
 #: reserved name because of it: no session may announce it and nothing may be
@@ -385,6 +392,22 @@ class Broker:
                 f"'{ANON_SENDER}' is reserved: `send` refuses it as a destination "
                 "(it is the stamp for a sender that claimed nothing), so a session "
                 "holding that handle could never be replied to. Pick another name."
+            )
+        # A tab or a newline in a handle is not a style question: `ccd ls`
+        # joins a roster row with tabs and prints one row per line, so such a
+        # handle renders as a row with extra columns, or as two rows -- and
+        # every consumer of that output counts fields or lines (#27). Refused
+        # where a handle ENTERS the roster, which is the only place it can.
+        # A space is left alone deliberately: it is merely awkward to type
+        # back, it breaks no output format, and ADR-0005 keeps hand-announced
+        # participants first-class rather than held to `ccd launch`'s
+        # conventions. `ccd launch` slugs its own derived handles regardless.
+        bad = next((ch for ch in handle if ch in "\t\r\n" or ord(ch) < 32), None)
+        if bad is not None:
+            return _err(
+                f"handle {handle!r} contains {bad!r}, which the roster cannot "
+                "represent: `ccd ls` separates columns with tabs and records "
+                "with newlines"
             )
         # Required — the declared identity a re-announce is checked against
         # below. No `slot` alongside it: dropped from this schema before

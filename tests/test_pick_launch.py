@@ -526,3 +526,64 @@ def test_launch_reports_a_launcher_missing_from_path(tmp_path, repo_root):
     out = run_ccd(env, "launch", "claude-sonnet-5-medium", "--issue", "1", "--phase", "1")
     assert out.returncode == 1
     assert "not on $PATH" in out.stderr
+
+
+# ----------------------------------------------------------------------
+# a handle is an address, so what goes into one is normalised (#27)
+# ----------------------------------------------------------------------
+
+def test_launch_slugs_whitespace_out_of_the_issue(with_broker):
+    """`--issue "auth epic"` used to derive `auth epic-<mapping-id>-api`.
+
+    The broker accepted it and `ccd ls` printed it intact, so nothing failed --
+    every caller just had to quote that handle from then on. The mapping-id
+    half of the same string was already slugged by ccd_mappings; this is the
+    other half catching up.
+    """
+    out = run_ccd(with_broker, "launch", ID_KIMI, "--issue", "auth epic")
+    assert out.returncode == 0, repr(out.stdout + out.stderr)
+    assert json.loads(out.stdout)["CCD_HANDLE"] == "auth-epic-" + ID_KIMI + "-api"
+
+
+def test_launch_slugs_the_phase_the_same_way(with_broker):
+    out = run_ccd(with_broker, "launch", ID_KIMI,
+                  "--issue", "Auth Epic", "--phase", "Round 2")
+    assert out.returncode == 0, repr(out.stdout + out.stderr)
+    assert (json.loads(out.stdout)["CCD_HANDLE"]
+            == "auth-epic-round-2-" + ID_KIMI + "-api")
+
+
+def test_launch_refuses_an_issue_that_slugs_to_nothing(with_broker):
+    """Not an omission -- a usage error, and the issue case is load-bearing.
+
+    Treating a blank-after-slugging issue as absent while a phase was given
+    would compose `<phase>-<mapping-id>` through the back door: exactly the
+    shape `--phase` without `--issue` is refused for at the front door.
+    """
+    out = run_ccd(with_broker, "launch", ID_KIMI, "--issue", "   ", "--phase", "3")
+    assert out.returncode == 2, repr(out.stdout + out.stderr)
+    assert "nothing a handle can be built from" in out.stderr
+
+
+def test_launch_refuses_a_phase_that_slugs_to_nothing(with_broker):
+    out = run_ccd(with_broker, "launch", ID_KIMI, "--issue", "42", "--phase", "///")
+    assert out.returncode == 2, repr(out.stdout + out.stderr)
+    assert "nothing a handle can be built from" in out.stderr
+
+
+def test_launch_refuses_an_explicit_handle_containing_whitespace(with_broker):
+    """Validated, not rewritten: `--handle` is the whole name, chosen
+    deliberately, so silently returning a different one would be the surprise.
+    """
+    out = run_ccd(with_broker, "launch", ID_KIMI, "--handle", "my session")
+    assert out.returncode == 2, repr(out.stdout + out.stderr)
+    assert "contains whitespace" in out.stderr
+
+
+def test_launch_leaves_an_ordinary_explicit_handle_alone(with_broker):
+    """Only whitespace is refused. Mixed case and punctuation are legal in a
+    handle and were legal before this change -- narrowing that would be a new
+    refusal for something that already worked."""
+    out = run_ccd(with_broker, "launch", ID_KIMI, "--handle", "MyThing-2")
+    assert out.returncode == 0, repr(out.stdout + out.stderr)
+    assert json.loads(out.stdout)["CCD_HANDLE"] == "MyThing-2"
