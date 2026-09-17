@@ -31,7 +31,7 @@ from .rpc import (
 
 USAGE = """usage: ccd <subcommand> [args]
 
-  ccd send <to> <msg> [-f from]
+  ccd send <to> <msg> [-f from]         ($CCD_HANDLE is the default sender)
   ccd recv [<handle>] [-t timeout]      ($CCD_HANDLE is the default handle)
   ccd announce [[<handle>] <model> <effort>] [--exclusive] [--force]
                                         ($CCD_MAPPING supplies model/effort)
@@ -91,7 +91,17 @@ def cmd_send(argv: list) -> int:
         return 2
     to, msg = argv[0], argv[1]
     rest = argv[2:]
-    sender = ""
+    # $CCD_HANDLE is the default sender, the same default `recv`, `announce`
+    # and `ret` already apply (#36). `send` was the one identity-taking
+    # subcommand without it, and the one place the identity is unrecoverable
+    # afterwards: the broker stamps an absent `from` as the literal "unknown",
+    # a worker following its skill replies to what `recv` printed, and the
+    # reply lands on a queue no roster entry will ever drain.
+    #
+    # An explicit `-f ''` still reaches the broker empty, so the anonymous
+    # sender of ADR-0007 stays reachable — as a deliberate choice rather than
+    # as a forgotten flag, which is the whole distinction that was missing.
+    sender = _env_handle()
     while rest:
         if rest[0] == "-f":
             if len(rest) < 2:

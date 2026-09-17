@@ -120,6 +120,12 @@ ccd send <worker> "<the task>"
 Say what you want done, in the message. The worker does that and only that, so
 a vague message gets vague work.
 
+Your own handle travels with the message automatically — `$CCD_HANDLE` is the
+default sender, so there is no `-f` to remember, and the worker's `recv` prints
+your handle as the address to reply to. (Before that default existed, a send
+without `-f` arrived attributed to `unknown` and the worker's reply went to a
+queue nobody drained.)
+
 To collect a reply, read your own queue:
 
 ```

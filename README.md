@@ -473,7 +473,7 @@ gets a human back in control without losing work in flight.
 ## CLI reference
 
 ```
-ccd send <to> <msg> [-f from]
+ccd send <to> <msg> [-f from]         ($CCD_HANDLE is the default sender)
 ccd recv [<handle>] [-t timeout]      ($CCD_HANDLE is the default handle)
 ccd announce [<handle>] <model> <effort> [--exclusive] [--force]
 ccd ret [<handle>]

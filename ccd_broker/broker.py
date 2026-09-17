@@ -93,6 +93,14 @@ nothing, so a human at a third shell can always reach any worker. Sender
 identity is self-asserted (ADR-0006), so this stops a confused dispatcher, not a
 dishonest one.
 
+The anonymous sender's stamp is a reserved name (1.8.0, #36): a `send` carrying
+no `from` still arrives attributed to `unknown`, but `unknown` may no longer be
+announced or sent *to*. Both halves of that were a black hole — a worker
+replying to the sender `recv` printed got `ok` and a message id for a queue no
+roster entry would ever drain. The refusal on `to` names what to do instead;
+`ccd send` now defaults `from` to `$CCD_HANDLE`, so a participant that simply
+forgot the flag no longer reaches the escape hatch by accident.
+
 Where the dashboard's data comes from (ADR-0008): `announce` carries two
 optional self-asserted fields, `cwd` and `session`, and `roster` hands them
 back untouched. They are the *only* correlation between a handle and the
@@ -123,7 +131,16 @@ from typing import Any, Callable, Optional, Protocol, runtime_checkable
 # not a slot alias — "slot" was tried and dropped before release, see the
 # module docstring's Vocabulary section); roster reads lazily reap a dead
 # pid (claude-code-delegation#13).
-VERSION = "1.7.0"
+VERSION = "1.8.0"
+
+#: What this broker stamps on a message whose sender claimed nothing, and a
+#: reserved name because of it: no session may announce it and nothing may be
+#: sent to it (#36). Until that reservation existed, a `send` that had merely
+#: forgotten `-f` was indistinguishable from the deliberate anonymous sender of
+#: ADR-0007, and a worker replying to the sender `recv` printed put its report
+#: on a queue no roster entry could ever drain -- silently, with `ok` and a
+#: message id back.
+ANON_SENDER = "unknown"
 
 #: `recv` timeout when the client does not supply one (24h — a parked worker).
 DEFAULT_RECV_TIMEOUT = 86400.0
@@ -228,12 +245,19 @@ class Broker:
         to = args.get("to")
         if not _is_handle(to):
             return _err("send requires a non-empty string 'to'")
+        if to == ANON_SENDER:
+            return _err(
+                f"'{ANON_SENDER}' is not a handle: it is what this broker stamps "
+                "on a message whose sender claimed nothing, so nothing collects "
+                "what is queued there. Reply to the handle named in the message "
+                "text, or ask the human at your terminal who sent it."
+            )
         if "msg" not in args:
             return _err("send requires 'msg'")
         msg = args["msg"]
         sender = args.get("from")
         if sender is None or sender == "":
-            sender = "unknown"
+            sender = ANON_SENDER
         with self._cond:
             # Refuse only a *dispatcher's* send to a worker someone else
             # holds. A sender that claims nothing is never refused: losing
@@ -356,6 +380,12 @@ class Broker:
         handle = args.get("handle")
         if not _is_handle(handle):
             return _err("announce requires a non-empty string 'handle'")
+        if handle == ANON_SENDER:
+            return _err(
+                f"'{ANON_SENDER}' is reserved: `send` refuses it as a destination "
+                "(it is the stamp for a sender that claimed nothing), so a session "
+                "holding that handle could never be replied to. Pick another name."
+            )
         # Required — the declared identity a re-announce is checked against
         # below. No `slot` alongside it: dropped from this schema before
         # anything shipped (module docstring's Vocabulary section, #13) once

@@ -1,0 +1,6 @@
+argv: ccd announce unknown a-model low
+exit: 1
+--- stdout ---
+
+--- stderr ---
+error: 'unknown' is reserved: `send` refuses it as a destination (it is the stamp for a sender that claimed nothing), so a session holding that handle could never be replied to. Pick another name.
