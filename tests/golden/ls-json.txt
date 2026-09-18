@@ -13,6 +13,7 @@ exit: 0
       "cwd": "<REPO>",
       "session": null,
       "alive": true,
+      "pending": 0,
       "drift": ""
     },
     {
@@ -25,6 +26,7 @@ exit: 0
       "cwd": "<REPO>",
       "session": null,
       "alive": null,
+      "pending": 0,
       "drift": ""
     },
     {
@@ -37,8 +39,10 @@ exit: 0
       "cwd": "<REPO>",
       "session": null,
       "alive": true,
+      "pending": 0,
       "drift": ""
     }
-  ]
+  ],
+  "orphans": {}
 }
 --- stderr ---

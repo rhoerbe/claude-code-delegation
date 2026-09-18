@@ -1,0 +1,5 @@
+argv: ccd send ghost-worker a-task -f disp
+exit: 0
+--- stdout ---
+sent (id=m4)
+--- stderr ---

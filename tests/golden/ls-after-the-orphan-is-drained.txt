@@ -1,0 +1,5 @@
+argv: ccd ls
+exit: 0
+--- stdout ---
+disp	high	-	-	<PID>	up	
+--- stderr ---

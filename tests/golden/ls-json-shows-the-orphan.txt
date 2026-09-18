@@ -1,0 +1,24 @@
+argv: ccd ls --json
+exit: 0
+--- stdout ---
+{
+  "workers": [
+    {
+      "handle": "disp",
+      "effort": "high",
+      "model": null,
+      "pid": <PID>,
+      "mapping": null,
+      "owner": null,
+      "cwd": "<REPO>",
+      "session": null,
+      "alive": true,
+      "pending": 0,
+      "drift": ""
+    }
+  ],
+  "orphans": {
+    "ghost-worker": 1
+  }
+}
+--- stderr ---
