@@ -465,14 +465,26 @@ def cmd_ls(argv: list) -> int:
         # Keys are always present, `mapping` included, so a consumer can tell
         # "this session has no mapping" (null) from "this ccd is too old to
         # know about mappings" (key missing) without guessing.
+        # `pending` rides along inside each worker (the broker put it there);
+        # `orphans` is top-level because it is keyed by handles that, by
+        # definition, have no worker entry to ride in. Always present, `{}`
+        # when there are none, for the same reason `mapping` always is: a
+        # consumer can tell "none" from "this broker is too old to know".
         print(json.dumps(
-            {"workers": [dict(w, drift=_drift_marker(w)) for w in workers]},
+            {"workers": [dict(w, drift=_drift_marker(w)) for w in workers],
+             "orphans": reply.get("orphans") or {}},
             indent=2))
         return 0
 
+    # Queues with no roster entry are reported even when the roster is empty,
+    # and especially then: "(no workers announced)" with messages waiting for
+    # a handle nobody holds is the exact state #39 describes, and printing
+    # only the first half of it is how that state stayed invisible.
+    orphans = reply.get("orphans") or {}
     if not workers:
+        # stdout keeps saying exactly what it always said for an empty roster;
+        # the orphan note below goes to stderr either way.
         print("(no workers announced)")
-        return 0
 
     for worker in workers:
         handle = str(worker.get("handle"))
@@ -488,6 +500,19 @@ def cmd_ls(argv: list) -> int:
         drift = _drift_marker(worker)
 
         print("\t".join([handle, effort, owner, model, pid_col, status, drift]))
+
+    # On stderr, not as an eighth column: these rows have no header and their
+    # consumers count fields, which is why the mapping id went into `--json`
+    # rather than widening them (see `ccd ls --json`). stderr keeps a piped
+    # `ccd ls` byte-identical to what it printed before while still putting
+    # this in front of a human running it by hand.
+    if orphans:
+        total = sum(orphans.values())
+        _err(f"ccd ls: {total} message(s) queued for "
+             f"{len(orphans)} handle(s) not on the roster: "
+             + ", ".join(f"{h} ({n})" for h, n in sorted(orphans.items())))
+        _err("ccd ls: nothing will collect these until a session announces "
+             "that handle and calls recv.")
     return 0
 
 

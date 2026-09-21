@@ -467,11 +467,45 @@ rather than held to `ccd launch`'s conventions. `ccd launch` slugs its own
 derived handles regardless.
 
 `ccd ls --json` gives the same roster as data rather than columns: every field
-the broker holds, including the `mapping` id a session was launched from, plus
-the drift marker. That is what a script reads when it needs to relaunch the
+the broker holds, including the `mapping` id a session was launched from, the
+drift marker, and `pending` — how many messages that handle has been sent and
+not yet collected. That is what a script reads when it needs to relaunch the
 same work on a different backend — the text rows carry no mapping and
 deliberately never will, because they have no header and their consumers count
 fields.
+
+### Queued is not delivered
+
+`ccd send` answering `sent (id=m4)` means the broker **accepted** the message.
+It has never meant anything received it. The message sits on a queue until some
+session calls `recv` on that handle, and `pending` above is how many are
+waiting.
+
+The case worth watching for is a queue with no session behind it at all:
+
+```console
+$ ccd ls
+disp	high	-	claude-opus-5	31041	up
+ccd ls: 1 message(s) queued for 1 handle(s) not on the roster: w2 (1)
+ccd ls: nothing will collect these until a session announces that handle and calls recv.
+```
+
+That warning goes to **stderr**, so a piped `ccd ls` is byte-for-byte what it
+always was; `ccd ls --json` carries the same thing as an `orphans` object.
+
+A queue with no roster entry is not automatically an error — sending to a
+worker *before* it announces is a supported pattern, and the message is waiting
+correctly. It becomes a problem when nothing ever announces that handle: a
+typo'd handle, a session that retired with work still queued, or a session
+whose process died and was reaped. In each case `ccd send` said `sent` and
+nothing was wrong at the time.
+
+**A broker restart discards all of it** — queues and roster alike are in memory
+only. That is the failure behind
+[#39](https://github.com/rhoerbe/claude-code-delegation/issues/39): a deploy
+restarted the broker mid-run, two accepted messages went with it, and the
+dispatcher went on believing work was in flight. The `ccd` ansible role now
+refuses to deploy while any session is announced, for exactly that reason.
 
 ### Claiming workers
 
@@ -663,6 +697,8 @@ message simply queues for a session that will never collect it.
 |---|---|
 | `ccd recv: no handle given and $CCD_HANDLE not set` (exit 2) | Identity not in the environment. If the session was started with `claude --bg`, that is why — see above. |
 | Messages sent but never received; both sides look healthy | Two brokers. Check `CCD_SOCKET` on **both** sides resolves to the same path. |
+| A worker never replies, and `ccd send` reported `sent` | `sent` means accepted, not delivered. Run `ccd ls`: a warning on stderr names any handle with messages queued and no session behind it. |
+| `ccd ls` warns about a handle you do not recognise | A typo'd destination, or a session that retired with work still queued. `ccd recv <that-handle> -t 1` drains one message so you can see what it was. |
 | `ccd ls` is empty but workers are running | The broker restarted. Queues and the roster are in-memory only, and neither side is told. Every participant must re-announce. |
 | `'w1' is claimed by 'disp'` on send | Another dispatcher holds that worker. `ccd release w1`, or `ccd claim w1 <you> --force`. |
 | A worker is stuck claimed by a dispatcher that no longer exists | Expected — claims have no liveness. Force the claim over. |

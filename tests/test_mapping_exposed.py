@@ -152,10 +152,16 @@ def test_both_forms_agree_about_drift(cli):
 
 def test_an_empty_roster_is_an_empty_list(cli):
     """Not the text sentinel. A consumer should not have to string-match
-    "(no workers announced)"."""
+    "(no workers announced)".
+
+    Compared whole rather than key by key, so a key appearing or disappearing
+    fails here and has to be looked at -- which is how `orphans` (#39) was
+    caught arriving. An empty roster is now two empty containers: no sessions,
+    and no queues waiting for handles that are not sessions.
+    """
     out = cli("ls", "--json")
     assert out.returncode == 0
-    assert json.loads(out.stdout) == {"workers": []}
+    assert json.loads(out.stdout) == {"workers": [], "orphans": {}}
 
 
 def test_an_unknown_flag_is_a_usage_error(cli):

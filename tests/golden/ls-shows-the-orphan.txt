@@ -1,0 +1,7 @@
+argv: ccd ls
+exit: 0
+--- stdout ---
+disp	high	-	-	<PID>	up	
+--- stderr ---
+ccd ls: 1 message(s) queued for 1 handle(s) not on the roster: ghost-worker (1)
+ccd ls: nothing will collect these until a session announces that handle and calls recv.

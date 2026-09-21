@@ -80,6 +80,14 @@ declared metadata: a different `effort`, or a different `model` where both
 sides declared one. A pid-less participant is never refused by a rule it
 cannot satisfy — ADR-0005 has it first-class. `force` bypasses all of it.
 
+Pending queues (1.10.0, #39): `roster` reports each handle's undelivered depth
+as `pending`, and every queue holding messages for a handle the roster does not
+have as `orphans`. Both are read-only counts of state the broker already held —
+`sent (id=mN)` has always meant "accepted", never "delivered", and there was no
+way to see the difference from outside. Orphans are the expensive half: a queue
+whose handle never announced, or whose session retired while messages were
+still waiting, is drained by nobody and appears in no roster-keyed view.
+
 Drift (#13) is never computed or stored here: the broker holds no transcript
 access (ADR-0003) and no opinion about what actually ran. `ccd ls` computes
 it itself by reading the same transcript the dashboard does (ADR-0008) and
@@ -138,7 +146,7 @@ from typing import Any, Callable, Optional, Protocol, runtime_checkable
 # not a slot alias — "slot" was tried and dropped before release, see the
 # module docstring's Vocabulary section); roster reads lazily reap a dead
 # pid (claude-code-delegation#13).
-VERSION = "1.9.0"
+VERSION = "1.10.0"
 
 #: What this broker stamps on a message whose sender claimed nothing, and a
 #: reserved name because of it: no session may announce it and nothing may be
@@ -579,7 +587,24 @@ class Broker:
                 for entry in self._roster.values():
                     if entry.get("owner") == handle:
                         entry["owner"] = None
-        return {"ok": True, "workers": workers}
+            # Undelivered depth per handle (#39). `sent (id=mN)` confirms this
+            # broker accepted a message, not that anything received it, and
+            # until now nothing could tell the two apart from outside: a
+            # dispatcher could not distinguish a worker parked with an empty
+            # queue from one that never collected what it was sent.
+            for e in workers:
+                e["pending"] = len(self._queues.get(e["handle"], ()))
+            # Queues with messages and NO roster entry — the case that costs
+            # the most and shows the least. Every roster-keyed view misses
+            # them by construction, because the handle is exactly what is
+            # missing: a send to a handle that never announced, or one whose
+            # session retired or was reaped while messages were still queued
+            # for it. Nothing drains these, and nothing said so.
+            orphans = {
+                h: len(q) for h, q in sorted(self._queues.items())
+                if q and h not in self._roster
+            }
+        return {"ok": True, "workers": workers, "orphans": orphans}
 
     def _m_ping(self, args: dict, ctx: Optional[ClientContext]) -> Optional[dict]:
         return {"ok": True, "version": VERSION, "started_at": self.started_at}

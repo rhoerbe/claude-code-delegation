@@ -384,6 +384,18 @@ record_case announce-mapping-ret2 -- ret w-map2
 record_case announce-mapping-ret3 -- ret w-map3
 record_case announce-mapping-ret4 -- ret w-map4
 
+# A queue with no session behind it (#39). `sent (id=mN)` says this broker
+# accepted the message, never that anything received it, and a handle that
+# never announced has a queue all the same — the pre-announce send is a
+# supported pattern, so the broker cannot refuse it. Warned about on stderr
+# rather than added as an eighth column: these rows have no header and their
+# consumers count fields. Drained afterwards so nothing downstream inherits it.
+record_case ls-with-an-orphan-queue -- send ghost-worker a-task -f disp
+record_case ls-shows-the-orphan -- ls
+record_case ls-json-shows-the-orphan -- ls --json
+record_case ls-orphan-drained -- recv ghost-worker -t 1
+record_case ls-after-the-orphan-is-drained -- ls
+
 record_case broker-stop -- broker stop
 record_case broker-stop-again -- broker stop
 

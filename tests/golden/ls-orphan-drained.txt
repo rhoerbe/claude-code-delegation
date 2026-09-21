@@ -1,0 +1,5 @@
+argv: ccd recv ghost-worker -t 1
+exit: 0
+--- stdout ---
+disp: a-task
+--- stderr ---
